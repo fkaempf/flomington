@@ -2668,56 +2668,80 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
 
   return (
     <div>
-      {/* Mine / All toggle */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex gap-2">
-          {['mine', 'all'].map(v => (
-            <button key={v} onClick={() => setShowAll(v === 'all')}
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 capitalize"
-              style={(v === 'all') === showAll
-                ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }
-                : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
-              }>{v === 'mine' ? 'My Stocks' : 'All Stocks'}</button>
-          ))}
+      {/* Search bar */}
+      <div className="flex gap-2 mb-3">
+        <Inp placeholder={catFilter === 'all' ? 'Search all stocks...' : `Search ${catFilter}...`} value={search} onChange={e => setSearch(e.target.value)} className="flex-1" />
+      </div>
+
+      {/* Toolbar row */}
+      <div className="flex items-center gap-2 mb-3">
+        {/* Mine / All segmented control */}
+        <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
+          <button onClick={() => setShowAll(false)}
+            className="px-3 py-1.5 text-[11px] font-semibold transition-all active:scale-95"
+            style={!showAll
+              ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }
+              : { background: 'var(--surface-2)', color: 'var(--text-3)' }
+            }>Mine</button>
+          <button onClick={() => setShowAll(true)}
+            className="px-3 py-1.5 text-[11px] font-semibold transition-all active:scale-95"
+            style={{ borderLeft: '1px solid var(--border)',
+              ...(showAll
+                ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }
+                : { background: 'var(--surface-2)', color: 'var(--text-3)' })
+            }}>All</button>
         </div>
-        <button onClick={onOpenPrint} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95"
+        {/* Sort */}
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+          className="px-2 py-1.5 text-[11px] font-semibold rounded-lg shrink-0"
+          style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', appearance: 'auto', maxWidth: '90px' }}>
+          <option value="nextFlip">Flip</option>
+          <option value="added">Added</option>
+          <option value="alpha">A–Z</option>
+        </select>
+        <div className="flex-1" />
+        {/* Print */}
+        <button onClick={onOpenPrint} title={`Print labels${printList.length > 0 ? ` (${printList.length})` : ''}`}
+          className="relative flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
           style={{ background: printList.length > 0 ? 'rgba(0,128,128,0.12)' : 'var(--surface-2)', color: printList.length > 0 ? '#5eead4' : 'var(--text-3)', border: printList.length > 0 ? '1px solid rgba(0,128,128,0.2)' : '1px solid var(--border)' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-          {printList.length > 0 && <span>{printList.length}</span>}
+          {printList.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center" style={{ background: '#5eead4', color: '#09090b' }}>{printList.length}</span>}
         </button>
-        <button onClick={() => { setSelectMode(m => { const next = !m; onBulkActive?.(next); return next; }); }}
-          className="px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95"
+        {/* Select */}
+        <button onClick={() => { setSelectMode(m => { const next = !m; onBulkActive?.(next); return next; }); }} title="Multi-select"
+          className="flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
           style={selectMode
             ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }
             : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
-          }>{selectMode ? 'Done' : 'Select'}</button>
-        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
-          className="px-2 py-1.5 text-xs font-semibold rounded-lg"
-          style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', appearance: 'auto' }}>
-          <option value="nextFlip">Next Flip</option>
-          <option value="added">Last Added</option>
-          <option value="alpha">A–Z</option>
-        </select>
+          }>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>{selectMode && <polyline points="9 11 12 14 22 4"/>}
+          </svg>
+        </button>
+        {/* Add */}
+        <button onClick={() => setEditing({ id: null, name: '', genotype: '', category: catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter, location: '25inc', notes: '', variant: catFilter === 'expanded' ? 'expanded' : 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser, copies: 1 })} title="Add new stock"
+          className="flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
+          style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
       </div>
+
       {/* Collection filter chips */}
-      <div className="flex gap-2 mb-4 overflow-x-auto pb-2" style={{ WebkitOverflowScrolling: 'touch', position: 'relative', zIndex: 5 }}>
+      <div className="flex gap-1.5 mb-4 overflow-x-auto pb-2" style={{ WebkitOverflowScrolling: 'touch', position: 'relative', zIndex: 5 }}>
         {['all', 'expanded', ...STOCK_CATS].map(cat => (
           <button key={cat} onClick={() => setCatFilter(cat)}
-            className="px-4 py-2 text-xs font-semibold rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
             style={catFilter === cat
               ? { background: 'rgba(0,128,128,0.15)', color: '#5eead4', border: '1px solid rgba(0,128,128,0.3)' }
               : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
-            }>{cat === 'all' ? 'All' : cat}</button>
+            }>{cat === 'all' ? 'All' : cat === 'expanded' ? 'Exp' : cat}</button>
         ))}
         <button onClick={() => { setAddingCat(true); setNewCatName(''); }}
-          className="px-3 py-2 text-xs font-semibold rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+          className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
           style={{ background: 'var(--surface-2)', color: 'var(--accent-2)', border: '1px solid var(--border)' }}>+</button>
-      </div>
-
-      <div className="flex gap-3 mb-5">
-        <Inp placeholder={catFilter === 'all' ? 'Search all stocks...' : `Search ${catFilter}...`} value={search} onChange={e => setSearch(e.target.value)} className="flex-1" />
-        <Btn onClick={() => setEditing({ id: null, name: '', genotype: '', category: catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter, location: '25inc', notes: '', variant: catFilter === 'expanded' ? 'expanded' : 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser, copies: 1 })}>+ Add</Btn>
       </div>
 
       {catFilter !== 'all' && catFilter !== 'expanded' && catFilter !== 'No Collection' && filtered.length > 0 && (() => {

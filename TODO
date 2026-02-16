@@ -1,0 +1,13 @@
+Flomington — TODO
+==================
+
+## Data / Integration
+- [ ] Automatic integration into users' Google Calendar (flip reminders, cross milestones, screening/ripening deadlines)
+- [ ] User may need to reload demo data from Settings to pick up fixed maintainer assignments (localStorage caches old data)
+
+## Features
+- [ ] Label printing: add stocks/crosses to a print list, select label format (e.g. Avery J8651 / L7651), generate printable label sheet
+
+## Polish
+- [ ] Verify StatiCrypt encrypted dist/index.html works correctly with all recent changes
+- [ ] Test on various mobile browsers (Safari iOS, Chrome Android)

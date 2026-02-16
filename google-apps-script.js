@@ -43,9 +43,31 @@ function getSheet(name, headers) {
       sheet = ss.insertSheet(name);
     }
   }
-  if (sheet.getLastRow() === 0 || sheet.getRange(1, 1).getValue() !== headers[0]) {
-    sheet.clear();
-    sheet.appendRow(headers);
+  var lastRow = sheet.getLastRow();
+  var needsHeaders = lastRow === 0;
+  if (!needsHeaders) {
+    var existing = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    needsHeaders = existing.length < headers.length || existing[0] !== headers[0];
+  }
+  if (needsHeaders) {
+    // Preserve data rows, rewrite header
+    if (lastRow > 1) {
+      var data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+      var oldHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      sheet.clear();
+      sheet.appendRow(headers);
+      // Re-map old data to new header order
+      var rows = data.map(function(row) {
+        return headers.map(function(h) {
+          var idx = oldHeaders.indexOf(h);
+          return idx >= 0 ? row[idx] : '';
+        });
+      });
+      sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+    } else {
+      sheet.clear();
+      sheet.appendRow(headers);
+    }
     sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
   }
   return sheet;

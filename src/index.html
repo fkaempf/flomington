@@ -2152,11 +2152,11 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
 }
 
 /* ========== HOME SCREEN ========== */
-function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross, virginBank, setVirginBank, virginsPerCross, currentUser, transfers, onAcceptTransfer, onDeclineTransfer, onTransfer, STOCK_CATS, sentTransfers, onDismissTransfer, printListCrosses, setPrintListCrosses }) {
+function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross, virginBank, setVirginBank, virginsPerCross, currentUser, transfers, onAcceptTransfer, onDeclineTransfer, onTransfer, STOCK_CATS, sentTransfers, onDismissTransfer, printListCrosses, setPrintListCrosses, initialCrossId }) {
   const [showCompleted, setShowCompleted] = useState(false);
   const [flipCat, setFlipCat] = useState(null);
   const [flipDate, setFlipDate] = useState(today());
-  const [selectedCrossId, setSelectedCrossId] = useState(null);
+  const [selectedCrossId, setSelectedCrossId] = useState(initialCrossId || null);
   const activeRef = useRef(null);
   const healthRef = useRef(null);
 
@@ -3720,7 +3720,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     });
     crossItems.forEach(c => {
       const info = crossLabelText(c, stocks);
-      allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: '' });
+      allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: baseUrl + '?cross=' + c.id });
     });
 
     const perPage = spec.cols * spec.rows;
@@ -3941,11 +3941,32 @@ function App() {
     }
     return null;
   });
+  const [deepLinkCross, setDeepLinkCross] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const crossId = params.get('cross');
+    if (crossId) {
+      history.replaceState(null, '', window.location.pathname);
+      return crossId;
+    }
+    return null;
+  });
+  const [crossAccessDenied, setCrossAccessDenied] = useState(null);
   useEffect(() => {
     if (deepLinkStock && stocks.length > 0) {
       setTab('stocks');
     }
   }, [deepLinkStock]);
+  useEffect(() => {
+    if (deepLinkCross && crosses.length > 0) {
+      const c = crosses.find(x => x.id === deepLinkCross);
+      if (c && c.owner && c.owner !== currentUser) {
+        setCrossAccessDenied(cl(c, stocks));
+      } else if (c) {
+        setTab('home');
+      }
+      setDeepLinkCross(null);
+    }
+  }, [deepLinkCross, crosses]);
 
   // Virgin collection notifications at 9:00, 13:30, 18:00
   useEffect(() => {
@@ -4031,7 +4052,7 @@ function App() {
             toast.add('Transfer declined');
           }} STOCK_CATS={STOCK_CATS} sentTransfers={sentResolved} onDismissTransfer={(t) => {
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
-          }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} />}
+          }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} />}
           {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} onOpenPrint={() => setPrintOpen(true)} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
           {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} syncUrl={syncUrl} setSyncUrl={setSyncUrl} syncStatus={syncStatus} setSyncStatus={setSyncStatus} />}
@@ -4074,6 +4095,10 @@ function App() {
 
       <NewCrossWizard open={newCrossOpen} onClose={() => { setNewCrossOpen(false); setVirginCrossStock(null); }} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} preselectedVirgin={virginCrossStock} virginsPerCross={virginsPerCross} currentUser={currentUser} />
       <PrintLabelsModal open={printOpen} onClose={() => setPrintOpen(false)} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} stocks={stocks} crosses={crosses} toast={toast} />
+      <Modal open={!!crossAccessDenied} onClose={() => setCrossAccessDenied(null)} title="Access Denied">
+        <p className="text-sm mb-4" style={{ color: 'var(--text-2)' }}>The cross "{crossAccessDenied}" belongs to another user. Switch to the correct account to view it.</p>
+        <Btn v="s" onClick={() => setCrossAccessDenied(null)} className="w-full">Close</Btn>
+      </Modal>
       <Toasts items={toast.items} remove={toast.rm} />
     </div>
   );

@@ -3746,10 +3746,10 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     const qrSize = isLarge ? 20 : 10;
     const pad = isLarge ? '2mm 3mm' : '0.8mm 1mm';
     const gap = isLarge ? '2mm' : '1mm';
-    const nameSize = isLarge ? '10pt' : '6.5pt';
-    const genoSize = isLarge ? '7pt' : '4.5pt';
-    const genoClamp = isLarge ? 5 : 3;
-    const infoSize = isLarge ? '7pt' : '4.5pt';
+    const nameSize = isLarge ? '9pt' : '6.5pt';
+    const genoSize = isLarge ? '6pt' : '4.5pt';
+    const genoClamp = isLarge ? 10 : 3;
+    const infoSize = isLarge ? '6pt' : '4.5pt';
 
     w.document.write(`<!DOCTYPE html><html><head><title>Flomington Labels</title>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"><\/script>

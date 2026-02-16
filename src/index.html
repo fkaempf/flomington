@@ -4023,7 +4023,7 @@ const LABEL_FORMATS = {
 };
 
 function crossLabelText(c, stocks) {
-  const name = `♀ ${sn(stocks, c.parentA)} x ♂ ${sn(stocks, c.parentB)}`;
+  const name = `♀ ${sn(stocks, c.parentA)}<br>x<br>♂ ${sn(stocks, c.parentB)}`;
   const tl = getTL(c);
   const nw = d => d ? `<span style="white-space:nowrap">${d}</span>` : '';
   let action = '';
@@ -4067,7 +4067,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     });
     crossItems.forEach(c => {
       const info = crossLabelText(c, stocks);
-      allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: baseUrl + '?cross=' + c.id });
+      allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: baseUrl + '?cross=' + c.id, isCross: true });
     });
 
     const perPage = spec.cols * spec.rows;
@@ -4081,7 +4081,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
         return `<div class="label">
           ${lb.qrUrl ? '<div class="label-qr" id="qr-' + lb.id + '"></div>' : ''}
           <div class="label-text">
-            <div class="label-name">${lb.name}</div>
+            <div class="label-name"${lb.isCross ? ' style="-webkit-line-clamp:unset"' : ''}>${lb.name}</div>
             ${lb.line2 ? '<div class="label-geno">' + lb.line2 + '</div>' : ''}
             ${lb.line3 ? '<div class="label-info">' + lb.line3 + '</div>' : ''}
           </div>

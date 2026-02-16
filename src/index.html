@@ -3303,46 +3303,14 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
         </div>
       </div>
 
-      {currentUser === 'Flo' && (
+      {currentUser === 'Flo' && !adminUnlocked && (
       <div className="card p-5">
-        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Google Sheets Sync</p>
-        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Sync stocks, crosses &amp; PINs to Google Sheets. See google-apps-script.js for setup.</p>
-        {!adminUnlocked ? (
-          <div>
-            <p className="text-xs mb-2" style={{ color: 'var(--text-3)' }}>Enter Flo's PIN to unlock</p>
-            <div className="flex gap-2">
-              <Inp type="password" inputMode="numeric" maxLength="4" pattern="[0-9]*" value={adminPinInput} onChange={e => setAdminPinInput(e.target.value.replace(/\D/g, ''))} placeholder="PIN" style={{ width: 80, textAlign: 'center', letterSpacing: '0.3em' }} />
-              <Btn v="s" onClick={() => adminPinGate()}>Unlock</Btn>
-            </div>
-          </div>
-        ) : (
-          <>
-            <Inp value={syncUrl} onChange={e => setSyncUrl(e.target.value)} placeholder="Apps Script web app URL" className="mb-2" />
-            {syncUrl && (
-              <div className="flex gap-2 mb-2">
-                <Btn v="s" onClick={() => {
-                  setSyncStatus('Pushing...');
-                  const pins = USERS.map(u => { const h = localStorage.getItem(`flo-pin-${u}`); return h ? { user: u, hash: h } : null; }).filter(Boolean);
-                  sheetsPush(syncUrl, stocks, crosses, pins).then(r => {
-                    setSyncStatus('Pushed ' + (r.stockCount || 0) + ' stocks, ' + (r.crossCount || 0) + ' crosses');
-                    toast.add('Data pushed to sheet');
-                  }).catch(e => { setSyncStatus('Push failed'); toast.add('Push failed: ' + e.message); });
-                }} className="flex-1">Push to Sheet</Btn>
-                <Btn v="s" onClick={() => {
-                  setSyncStatus('Pulling...');
-                  sheetsPull(syncUrl).then(remote => {
-                    if (remote.stocks) setStocks(local => mergeStocks(local, remote.stocks));
-                    if (remote.crosses) setCrosses(local => mergeCrosses(local, remote.crosses));
-                    if (remote.pins) remote.pins.forEach(p => { if (p.user && p.hash && !localStorage.getItem(`flo-pin-${p.user}`)) localStorage.setItem(`flo-pin-${p.user}`, p.hash); });
-                    setSyncStatus('Pulled ' + (remote.stocks || []).length + ' stocks, ' + (remote.crosses || []).length + ' crosses');
-                    toast.add('Data pulled from sheet');
-                  }).catch(e => { setSyncStatus('Pull failed'); toast.add('Pull failed: ' + e.message); });
-                }} className="flex-1">Pull from Sheet</Btn>
-              </div>
-            )}
-            {syncStatus && <p className="text-xs" style={{ color: 'var(--text-3)' }}>{syncStatus}</p>}
-          </>
-        )}
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Admin</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Unlock with Flo's PIN to access sync, import/export, and data management.</p>
+        <div className="flex gap-2">
+          <Inp type="password" inputMode="numeric" maxLength="4" pattern="[0-9]*" value={adminPinInput} onChange={e => setAdminPinInput(e.target.value.replace(/\D/g, ''))} placeholder="PIN" style={{ width: 80, textAlign: 'center', letterSpacing: '0.3em' }} />
+          <Btn v="s" onClick={() => adminPinGate()}>Unlock</Btn>
+        </div>
       </div>
       )}
 
@@ -3368,23 +3336,6 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
           }>{notifyVirgins ? 'Enabled' : 'Enable Reminders'}</button>
       </div>
 
-      {currentUser === 'Flo' && adminUnlocked && (
-      <>
-      <div className="card p-5">
-        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Export Backup</p>
-        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Download all data as JSON.</p>
-        <Btn v="s" onClick={exportJSON} className="w-full">Export JSON</Btn>
-      </div>
-
-      <div className="card p-5">
-        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Import Backup</p>
-        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Load from a JSON backup. Replaces current data.</p>
-        <input type="file" accept=".json" ref={fileRef} onChange={importJSON} className="hidden" />
-        <Btn v="s" onClick={() => fileRef.current.click()} className="w-full">Import JSON</Btn>
-      </div>
-      </>
-      )}
-
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Calendar Export</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>All cross milestones as .ics file.</p>
@@ -3408,6 +3359,48 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
 
       {currentUser === 'Flo' && adminUnlocked && (
       <>
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Google Sheets Sync</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Sync stocks, crosses &amp; PINs to Google Sheets.</p>
+        <Inp value={syncUrl} onChange={e => setSyncUrl(e.target.value)} placeholder="Apps Script web app URL" className="mb-2" />
+        {syncUrl && (
+          <div className="flex gap-2 mb-2">
+            <Btn v="s" onClick={() => {
+              setSyncStatus('Pushing...');
+              const pins = USERS.map(u => { const h = localStorage.getItem(`flo-pin-${u}`); return h ? { user: u, hash: h } : null; }).filter(Boolean);
+              sheetsPush(syncUrl, stocks, crosses, pins).then(r => {
+                setSyncStatus('Pushed ' + (r.stockCount || 0) + ' stocks, ' + (r.crossCount || 0) + ' crosses');
+                toast.add('Data pushed to sheet');
+              }).catch(e => { setSyncStatus('Push failed'); toast.add('Push failed: ' + e.message); });
+            }} className="flex-1">Push to Sheet</Btn>
+            <Btn v="s" onClick={() => {
+              setSyncStatus('Pulling...');
+              sheetsPull(syncUrl).then(remote => {
+                if (remote.stocks) setStocks(local => mergeStocks(local, remote.stocks));
+                if (remote.crosses) setCrosses(local => mergeCrosses(local, remote.crosses));
+                if (remote.pins) remote.pins.forEach(p => { if (p.user && p.hash && !localStorage.getItem(`flo-pin-${p.user}`)) localStorage.setItem(`flo-pin-${p.user}`, p.hash); });
+                setSyncStatus('Pulled ' + (remote.stocks || []).length + ' stocks, ' + (remote.crosses || []).length + ' crosses');
+                toast.add('Data pulled from sheet');
+              }).catch(e => { setSyncStatus('Pull failed'); toast.add('Pull failed: ' + e.message); });
+            }} className="flex-1">Pull from Sheet</Btn>
+          </div>
+        )}
+        {syncStatus && <p className="text-xs" style={{ color: 'var(--text-3)' }}>{syncStatus}</p>}
+      </div>
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Export Backup</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Download all data as JSON.</p>
+        <Btn v="s" onClick={exportJSON} className="w-full">Export JSON</Btn>
+      </div>
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Import Backup</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Load from a JSON backup. Replaces current data.</p>
+        <input type="file" accept=".json" ref={fileRef} onChange={importJSON} className="hidden" />
+        <Btn v="s" onClick={() => fileRef.current.click()} className="w-full">Import JSON</Btn>
+      </div>
+
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Demo Data</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Load sample stocks and crosses.</p>

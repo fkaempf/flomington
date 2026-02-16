@@ -4117,16 +4117,73 @@ function App() {
   }
 
   if (initialLoading) return (
-    <div className="min-h-screen flex flex-col items-center justify-center" style={{ background: 'var(--bg)' }}>
-      <div className="mb-6" style={{ animation: 'pulse 1.5s ease-in-out infinite' }}>
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-          <ellipse cx="24" cy="28" rx="6" ry="9" fill="#8b5cf6" opacity="0.8"/>
-          <ellipse cx="24" cy="19" rx="4" ry="4" fill="#a78bfa"/>
-          <ellipse cx="15" cy="18" rx="7" ry="4" fill="#8b5cf6" opacity="0.3" transform="rotate(-30 15 18)"/>
-          <ellipse cx="33" cy="18" rx="7" ry="4" fill="#8b5cf6" opacity="0.3" transform="rotate(30 33 18)"/>
-          <circle cx="22" cy="18" r="1.2" fill="#ef4444"/>
-          <circle cx="26" cy="18" r="1.2" fill="#ef4444"/>
-        </svg>
+    <div className="min-h-screen flex flex-col items-center justify-center" style={{ background: 'var(--bg)', overflow: 'hidden' }}>
+      <style>{`
+        @keyframes flyBuzz {
+          0%   { transform: translate(0, 0) rotate(0deg); }
+          8%   { transform: translate(60px, -30px) rotate(15deg); }
+          15%  { transform: translate(20px, -60px) rotate(-10deg); }
+          25%  { transform: translate(-50px, -20px) rotate(-20deg); }
+          32%  { transform: translate(-70px, 30px) rotate(5deg); }
+          40%  { transform: translate(-20px, 50px) rotate(25deg); }
+          50%  { transform: translate(40px, 20px) rotate(-5deg); }
+          58%  { transform: translate(70px, -10px) rotate(-15deg); }
+          65%  { transform: translate(30px, -50px) rotate(10deg); }
+          75%  { transform: translate(-40px, -40px) rotate(20deg); }
+          83%  { transform: translate(-60px, 10px) rotate(-8deg); }
+          92%  { transform: translate(-10px, 40px) rotate(12deg); }
+          100% { transform: translate(0, 0) rotate(0deg); }
+        }
+        @keyframes wingL {
+          0%, 100% { transform: rotate(-30deg) scaleY(1); }
+          50% { transform: rotate(-30deg) scaleY(0.3); }
+        }
+        @keyframes wingR {
+          0%, 100% { transform: rotate(30deg) scaleY(1); }
+          50% { transform: rotate(30deg) scaleY(0.3); }
+        }
+        @keyframes flyDots {
+          0%, 100% { opacity: 0.15; }
+          50% { opacity: 0.4; }
+        }
+      `}</style>
+      <div style={{ position: 'relative', width: 200, height: 160 }}>
+        {/* Trail dots */}
+        {[0, 1, 2, 3, 4].map(i => (
+          <div key={i} style={{
+            position: 'absolute', left: '50%', top: '50%',
+            width: 4, height: 4, borderRadius: '50%', background: '#8b5cf6',
+            animation: `flyBuzz 3.5s ease-in-out infinite, flyDots 0.8s ease-in-out infinite`,
+            animationDelay: `${-i * 0.15}s, ${-i * 0.16}s`,
+            opacity: 0.15,
+          }} />
+        ))}
+        {/* The fly */}
+        <div style={{
+          position: 'absolute', left: '50%', top: '50%',
+          marginLeft: -20, marginTop: -20,
+          animation: 'flyBuzz 3.5s ease-in-out infinite',
+        }}>
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+            {/* Wings */}
+            <ellipse cx="12" cy="14" rx="8" ry="4.5" fill="#a78bfa" opacity="0.35"
+              style={{ transformOrigin: '20px 18px', animation: 'wingL 60ms linear infinite' }} />
+            <ellipse cx="28" cy="14" rx="8" ry="4.5" fill="#a78bfa" opacity="0.35"
+              style={{ transformOrigin: '20px 18px', animation: 'wingR 60ms linear infinite' }} />
+            {/* Body */}
+            <ellipse cx="20" cy="24" rx="4.5" ry="7" fill="#8b5cf6" opacity="0.9"/>
+            {/* Head */}
+            <circle cx="20" cy="15" r="4" fill="#a78bfa"/>
+            {/* Eyes */}
+            <circle cx="18" cy="14" r="1.5" fill="#ef4444"/>
+            <circle cx="22" cy="14" r="1.5" fill="#ef4444"/>
+            {/* Legs */}
+            <line x1="17" y1="22" x2="13" y2="27" stroke="#7c3aed" strokeWidth="0.7" opacity="0.5"/>
+            <line x1="23" y1="22" x2="27" y2="27" stroke="#7c3aed" strokeWidth="0.7" opacity="0.5"/>
+            <line x1="16" y1="25" x2="12" y2="29" stroke="#7c3aed" strokeWidth="0.7" opacity="0.5"/>
+            <line x1="24" y1="25" x2="28" y2="29" stroke="#7c3aed" strokeWidth="0.7" opacity="0.5"/>
+          </svg>
+        </div>
       </div>
       <h1 className="text-xl font-bold tracking-tight mb-2" style={{ color: 'var(--text-1)' }}>Flomington</h1>
       <p className="text-xs" style={{ color: 'var(--text-3)' }}>Syncing...</p>

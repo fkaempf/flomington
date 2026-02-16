@@ -2693,8 +2693,8 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </div>
         {/* Sort */}
         <select value={sortBy} onChange={e => setSortBy(e.target.value)}
-          className="px-2 py-1.5 text-[11px] font-semibold rounded-lg shrink-0"
-          style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', appearance: 'auto', maxWidth: '90px' }}>
+          className="px-2 py-1.5 font-semibold rounded-lg shrink-0"
+          style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', appearance: 'auto', maxWidth: '90px', fontSize: '11px' }}>
           <option value="nextFlip">Flip</option>
           <option value="added">Added</option>
           <option value="alpha">A–Z</option>

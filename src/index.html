@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#09090b">
 <title>Flomington</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cellipse cx='10' cy='10' rx='7' ry='4' fill='%23c4b5fd' opacity='.4' transform='rotate(-20 10 10)'/%3E%3Cellipse cx='22' cy='10' rx='7' ry='4' fill='%23c4b5fd' opacity='.4' transform='rotate(20 22 10)'/%3E%3Cellipse cx='16' cy='21' rx='5' ry='7.5' fill='%237c3aed'/%3E%3Cellipse cx='16' cy='13' rx='4' ry='4' fill='%238b5cf6'/%3E%3Ccircle cx='16' cy='8' r='3.5' fill='%23a78bfa'/%3E%3Ccircle cx='14' cy='7' r='1.8' fill='%23ef4444'/%3E%3Ccircle cx='18' cy='7' r='1.8' fill='%23ef4444'/%3E%3Ccircle cx='13.6' cy='6.4' r='.5' fill='%23fca5a5' opacity='.8'/%3E%3Ccircle cx='17.6' cy='6.4' r='.5' fill='%23fca5a5' opacity='.8'/%3E%3Cellipse cx='16' cy='19' rx='4' ry='.5' fill='%236d28d9' opacity='.3'/%3E%3Cellipse cx='16' cy='22' rx='3.3' ry='.4' fill='%236d28d9' opacity='.3'/%3E%3Cellipse cx='16' cy='25' rx='2.2' ry='.3' fill='%236d28d9' opacity='.3'/%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cellipse cx='10' cy='10' rx='7' ry='4' fill='%23c4b5fd' opacity='.4' transform='rotate(-20 10 10)'/%3E%3Cellipse cx='22' cy='10' rx='7' ry='4' fill='%23c4b5fd' opacity='.4' transform='rotate(20 22 10)'/%3E%3Cpath d='M13 15 Q10 17 8 20' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M19 15 Q22 17 24 20' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M12.5 18 Q9 20 7 23' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M19.5 18 Q23 20 25 23' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M13 21 Q10 24 9 27' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M19 21 Q22 24 23 27' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cellipse cx='16' cy='21' rx='5' ry='7.5' fill='%237c3aed'/%3E%3Cellipse cx='16' cy='13' rx='4' ry='4' fill='%238b5cf6'/%3E%3Ccircle cx='16' cy='8' r='3.5' fill='%23a78bfa'/%3E%3Ccircle cx='14' cy='7' r='1.8' fill='%23ef4444'/%3E%3Ccircle cx='18' cy='7' r='1.8' fill='%23ef4444'/%3E%3Ccircle cx='13.6' cy='6.4' r='.5' fill='%23fca5a5' opacity='.8'/%3E%3Ccircle cx='17.6' cy='6.4' r='.5' fill='%23fca5a5' opacity='.8'/%3E%3Cellipse cx='16' cy='19' rx='4' ry='.5' fill='%236d28d9' opacity='.3'/%3E%3Cellipse cx='16' cy='22' rx='3.3' ry='.4' fill='%236d28d9' opacity='.3'/%3E%3Cellipse cx='16' cy='25' rx='2.2' ry='.3' fill='%236d28d9' opacity='.3'/%3E%3C/svg%3E">
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -4019,6 +4019,13 @@ function FlyLoader() {
             {/* Antennae */}
             <path d="M20.5 10.5 Q18 6 16 5" stroke="#a78bfa" strokeWidth="0.6" fill="none" opacity="0.6"/>
             <path d="M23.5 10.5 Q26 6 28 5" stroke="#a78bfa" strokeWidth="0.6" fill="none" opacity="0.6"/>
+            {/* Legs — 3 pairs from thorax */}
+            <path d="M18.5 19 Q15 22 12 24" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+            <path d="M25.5 19 Q29 22 32 24" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+            <path d="M18 22 Q14 25 11 28" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+            <path d="M26 22 Q30 25 33 28" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+            <path d="M19 25 Q15 29 13 32" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+            <path d="M25 25 Q29 29 31 32" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
             {/* Abdomen stripes */}
             <ellipse cx="22" cy="26" rx="4.2" ry="0.6" fill="#6d28d9" opacity="0.3"/>
             <ellipse cx="22" cy="29" rx="3.5" ry="0.5" fill="#6d28d9" opacity="0.3"/>

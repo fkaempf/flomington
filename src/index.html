@@ -366,14 +366,14 @@ input:focus, textarea:focus, select:focus {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 20px;
+  padding: 6px 14px;
   border-radius: 999px;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
   gap: 2px;
-  min-width: 72px;
+  min-width: 56px;
 }
 .nav-item.active {
   background: var(--accent-glow);
@@ -2602,8 +2602,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [bulkCopyNum, setBulkCopyNum] = useState(1);
   useEffect(() => { if (!selectMode) setSelected(new Set()); }, [selectMode]);
   useEffect(() => { setSelected(new Set()); }, [catFilter, showAll, search]);
-  const bulkActive = selectMode && selected.size > 0;
-  useEffect(() => { onBulkActive?.(bulkActive); return () => onBulkActive?.(false); }, [bulkActive]);
+  useEffect(() => () => onBulkActive?.(false), []);
 
   function toggleSelect(id) {
     setSelected(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
@@ -2687,7 +2686,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
             <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           {printList.length > 0 && <span>{printList.length}</span>}
         </button>
-        <button onClick={() => setSelectMode(m => !m)}
+        <button onClick={() => { setSelectMode(m => { const next = !m; onBulkActive?.(next); return next; }); }}
           className="px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95"
           style={selectMode
             ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }
@@ -2834,7 +2833,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </>
       )}
 
-      <StockModal stock={editing} onClose={() => setEditing(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={id => { setEditing(null); setDeleting(id); }} STOCK_CATS={STOCK_CATS} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} printList={printList} setPrintList={setPrintList} />
+      <StockModal stock={editing} onClose={() => setEditing(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={id => { setEditing(null); setDeleting(id); }} STOCK_CATS={STOCK_CATS} setCollections={setCollections} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} printList={printList} setPrintList={setPrintList} />
       <Confirm open={!!deleting} onOk={doDelete} onNo={() => setDeleting(null)} title="Delete stock?" msg="This stock will be permanently removed." />
 
       {/* Access denied for deep link */}
@@ -2964,41 +2963,52 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       </Modal>
 
       {/* Bulk action toolbar — replaces bottom nav */}
-      {bulkActive && (
-        <div className="fixed left-1/2 z-40 anim-in" style={{ bottom: '16px', transform: 'translateX(-50%)' }}>
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full"
-            style={{ background: 'rgba(24,24,27,0.85)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03)' }}>
-            <span className="text-xs font-semibold mr-auto" style={{ color: 'var(--text-2)' }}>{selected.size} selected</span>
-            <button onClick={selectAll} className="text-xs font-semibold px-2 py-1 rounded-lg" style={{ color: 'var(--accent-2)' }}>
-              {selected.size === filtered.length ? 'None' : 'All'}
-            </button>
-            <button onClick={bulkFlip} title="Flip" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(34,197,94,0.1)', color: '#86efac' }}>
+      {selectMode && (() => {
+        const dis = selected.size === 0;
+        const btnCls = "flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg transition-all active:scale-95 cursor-pointer";
+        const disStyle = { opacity: 0.3, pointerEvents: 'none' };
+        return (
+          <nav className="bottom-nav" style={{ gap: '2px', padding: '4px 6px' }}>
+            <span className="text-[10px] font-semibold px-2 whitespace-nowrap" style={{ color: 'var(--text-2)' }}>{selected.size || 'None'}</span>
+            <div title="Select all / deselect all" onClick={selectAll} className={btnCls} style={{ color: 'var(--accent-2)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/>{selected.size === filtered.length && <polyline points="9 11 12 14 22 4"/>}</svg>
+              <span className="text-[9px]">{selected.size === filtered.length ? 'None' : 'All'}</span>
+            </div>
+            <div title="Mark selected as flipped today" onClick={dis ? undefined : bulkFlip} className={btnCls} style={dis ? { ...disStyle, color: '#86efac' } : { color: '#86efac' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/></svg>
-            </button>
-            <button onClick={() => setBulkAction('collection')} title="Move" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(0,128,128,0.1)', color: '#5eead4' }}>
+              <span className="text-[9px]">Flip</span>
+            </div>
+            <div title="Move selected to a collection" onClick={dis ? undefined : () => setBulkAction('collection')} className={btnCls} style={dis ? { ...disStyle, color: '#5eead4' } : { color: '#5eead4' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-            </button>
-            <button onClick={() => setBulkAction('maintainer')} title="Assign" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa' }}>
+              <span className="text-[9px]">Move</span>
+            </div>
+            <div title="Assign a maintainer to selected" onClick={dis ? undefined : () => setBulkAction('maintainer')} className={btnCls} style={dis ? { ...disStyle, color: '#a78bfa' } : { color: '#a78bfa' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            </button>
-            <button onClick={() => setBulkAction('copies')} title="Copies" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>
+              <span className="text-[9px]">Assign</span>
+            </div>
+            <div title="Set copy number on selected" onClick={dis ? undefined : () => setBulkAction('copies')} className={btnCls} style={dis ? { ...disStyle, color: '#93c5fd' } : { color: '#93c5fd' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            </button>
-            <button onClick={() => { setBulkAppendText(''); setBulkAction('append'); }} title="Append text" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(245,158,11,0.1)', color: '#fcd34d' }}>
+              <span className="text-[9px]">Copy</span>
+            </div>
+            <div title="Append text to selected stock names" onClick={dis ? undefined : () => { setBulkAppendText(''); setBulkAction('append'); }} className={btnCls} style={dis ? { ...disStyle, color: '#fcd34d' } : { color: '#fcd34d' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            </button>
-            <button onClick={bulkSplit} title="Split" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(0,128,128,0.1)', color: '#5eead4' }}>
+              <span className="text-[9px]">Append</span>
+            </div>
+            <div title="Duplicate selected stocks as new copies" onClick={dis ? undefined : bulkSplit} className={btnCls} style={dis ? { ...disStyle, color: '#5eead4' } : { color: '#5eead4' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="16" y1="3" x2="16" y2="21"/><polyline points="8 17 12 21 16 21"/><polyline points="8 7 12 3 16 3"/></svg>
-            </button>
-            <button onClick={bulkPrint} title="Print" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(0,128,128,0.1)', color: '#5eead4' }}>
+              <span className="text-[9px]">Split</span>
+            </div>
+            <div title="Add selected to print queue" onClick={dis ? undefined : bulkPrint} className={btnCls} style={dis ? { ...disStyle, color: '#5eead4' } : { color: '#5eead4' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-            </button>
-            <button onClick={() => setBulkDeleting(true)} title="Delete" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }}>
+              <span className="text-[9px]">Print</span>
+            </div>
+            <div title="Delete selected stocks" onClick={dis ? undefined : () => setBulkDeleting(true)} className={btnCls} style={dis ? { ...disStyle, color: '#fca5a5' } : { color: '#fca5a5' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-          </div>
-        </div>
-      )}
+              <span className="text-[9px]">Delete</span>
+            </div>
+          </nav>
+        );
+      })()}
 
       {/* Bulk action modals */}
       <Confirm open={bulkDeleting} onOk={() => { bulkDeleteConfirmed(); }} onNo={() => setBulkDeleting(false)}
@@ -3026,10 +3036,10 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       </Modal>
 
       <Modal open={bulkAction === 'copies'} onClose={() => setBulkAction(null)} title="Set Copy Number">
-        <Field label="Copies">
+        <Field label="Copy">
           <Inp type="number" min="1" value={bulkCopyNum} onChange={e => setBulkCopyNum(Math.max(1, parseInt(e.target.value) || 1))} />
         </Field>
-        <Btn onClick={() => bulkSetCopies(bulkCopyNum)} className="w-full mt-2">Set Copies</Btn>
+        <Btn onClick={() => bulkSetCopies(bulkCopyNum)} className="w-full mt-2">Set Copy</Btn>
       </Modal>
 
       <Modal open={bulkAction === 'append'} onClose={() => setBulkAction(null)} title="Append Text to Name">
@@ -3043,7 +3053,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   );
 }
 
-function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_CATS, currentUser, onTransfer, virginBank, setVirginBank, printList, setPrintList }) {
+function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_CATS, setCollections, currentUser, onTransfer, virginBank, setVirginBank, printList, setPrintList }) {
   const [f, setF] = useState({});
   const [showNotes, setShowNotes] = useState(false);
   const [nameError, setNameError] = useState('');
@@ -3099,7 +3109,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
         <Inp value={f.name || ''} onChange={e => { const v = e.target.value; const upd = { ...f, name: v }; if (!f.source && !f.sourceId) { const g = guessSource(v); if (g) { upd.source = g.source; upd.sourceId = g.sourceId; } } setF(upd); setNameError(''); }} placeholder="e.g. Oregon-R" autoFocus={!isTouchDevice()} />
         {nameError && <p className="text-xs text-red-400 mt-1">{nameError}</p>}
       </Field>
-      <Field label="Copies">
+      <Field label="Copy">
         <Inp type="number" min="1" value={f.copies || 1} onChange={e => setF({ ...f, copies: Math.max(1, parseInt(e.target.value) || 1) })} />
       </Field>
       <Field label="Variant">
@@ -3117,8 +3127,21 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
         </div>
       </Field>
       <Field label="Collection">
-        <select value={f.category || 'No Collection'} onChange={e => setF({ ...f, category: e.target.value })} className="w-full px-4 py-3 text-sm rounded-xl" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>
+        <select value={f.category || 'No Collection'} onChange={e => {
+          if (e.target.value === '__new__') {
+            const name = prompt('New collection name:');
+            if (name && name.trim() && !STOCK_CATS.includes(name.trim())) {
+              const n = name.trim();
+              const idx = STOCK_CATS.indexOf('No Collection');
+              const next = [...STOCK_CATS];
+              if (idx >= 0) next.splice(idx, 0, n); else next.push(n);
+              setCollections(next);
+              setF({ ...f, category: n });
+            }
+          } else { setF({ ...f, category: e.target.value }); }
+        }} className="w-full px-4 py-3 text-sm rounded-xl" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>
           {STOCK_CATS.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+          <option value="__new__">+ New Collection</option>
         </select>
       </Field>
       <Field label="Genotype">
@@ -4489,17 +4512,16 @@ function App() {
           {IconStocks(tab === 'stocks')}
           <span style={{ color: tab === 'stocks' ? 'var(--accent-2)' : 'var(--text-3)' }}>Stocks</span>
         </div>
-        <div onClick={() => setNewCrossOpen(true)} className="nav-item" style={{ position: 'relative' }}>
-          <div className="flex items-center justify-center w-10 h-10 rounded-full" style={{
+        <div onClick={() => setNewCrossOpen(true)} className="nav-item">
+          <div className="flex items-center justify-center w-7 h-7 rounded-full" style={{
             background: 'linear-gradient(135deg, #7c3aed, #6d28d9)',
-            boxShadow: '0 4px 12px var(--accent-glow)',
-            marginTop: '-8px',
+            boxShadow: '0 2px 8px var(--accent-glow)',
           }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </div>
-          <span style={{ color: 'var(--accent-2)', fontSize: '9px', fontWeight: 600 }}>Cross</span>
+          <span style={{ color: 'var(--accent-2)' }}>Cross</span>
         </div>
         <div onClick={() => setTab('virgins')} className={`nav-item ${tab === 'virgins' ? 'active' : ''}`}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={tab === 'virgins' ? '#f9a8d4' : '#52525b'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

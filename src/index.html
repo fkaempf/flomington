@@ -400,8 +400,10 @@ const isPast = d => d < today();
 const isToday = d => d === today();
 const dFromNow = d => { if (!d) return 0; const ms = new Date(d + 'T12:00:00') - new Date(today() + 'T12:00:00'); return isNaN(ms) ? 0 : Math.round(ms / 864e5); };
 
+const isTouchDevice = () => window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
+
 /* ========== SHEETS SYNC ========== */
-const SYNC_FIELDS = ['id', 'name', 'genotype', 'variant', 'category', 'location', 'source', 'sourceId', 'flybaseId', 'maintainer', 'notes', 'isGift', 'giftFrom', 'createdAt', 'lastFlipped'];
+const SYNC_FIELDS = ['id', 'name', 'genotype', 'variant', 'category', 'location', 'source', 'sourceId', 'flybaseId', 'maintainer', 'notes', 'isGift', 'giftFrom', 'createdAt', 'lastFlipped', 'copies'];
 const CROSS_SYNC_FIELDS = ['id', 'parentA', 'parentB', 'temperature', 'setupDate', 'status', 'owner', 'notes', 'targetCount', 'collected', 'vials', 'virginsCollected', 'manualFlipDate', 'manualEcloseDate', 'manualVirginDate', 'crossType', 'parentCrossId', 'experimentType', 'experimentDate', 'retinalStartDate', 'waitStartDate', 'ripeningStartDate'];
 
 async function sheetsPull(url) {
@@ -475,9 +477,21 @@ const tempLabel = t => ({ '25inc': '25°C Inc', '25room': '25°C Room', '18': '1
 const tempFull = t => ({ '25inc': '25°C Incubator', '25room': '25°C Room', '18': '18°C Room', 'RT': 'Room Temp' }[t] || t);
 
 const TEMPS = ['25inc', '25room', '18', 'RT'];
-const DEFAULT_CATS = ['Lab Stocks', 'Flo Stocks 1', 'Flo Stocks 2', 'No Collection'];
+const DEFAULT_CATS = ['No Collection'];
 const USERS = ['Flo', 'Bella', 'Seba', 'Catherine', 'Tomke', 'Shahar', 'Myrto'];
 const STOCK_SOURCES = ['Bloomington', 'VDRC', 'Kyoto', 'Other'];
+function guessSource(name) {
+  if (!name) return null;
+  const n = name.trim();
+  const m = n.match(/^(BDSC|BL|Bloomington|VDRC|Kyoto|DGRC)\s*[#:]?\s*(\d+)/i);
+  if (!m) return null;
+  const prefix = m[1].toLowerCase();
+  const id = m[2];
+  if (['bdsc', 'bl', 'bloomington'].includes(prefix)) return { source: 'Bloomington', sourceId: id };
+  if (prefix === 'vdrc') return { source: 'VDRC', sourceId: id };
+  if (['kyoto', 'dgrc'].includes(prefix)) return { source: 'Kyoto', sourceId: id };
+  return null;
+}
 function stockUrl(source, stockId) {
   if (!source || !stockId) return null;
   const id = stockId.replace(/\D/g, '');
@@ -501,9 +515,9 @@ function flybaseUrl(fbId) {
 }
 const STOCK_VARIANTS = ['stock', 'expanded'];
 
-// Flip schedules: expanded always 25°C → 7d; stock varies by temp
+// Flip schedules: expanded always 25°C → 21d (3wk); stock varies by temp
 function getFlipDays(s) {
-  if ((s.variant || 'stock') === 'expanded') return 7;
+  if ((s.variant || 'stock') === 'expanded') return 21;
   if (is18(s.location)) return 42;
   if (s.location === 'RT') return 28;
   return 14; // 25°C variants
@@ -524,7 +538,7 @@ const stIdx = s => STATUSES.indexOf(s);
 
 const OPTO = ['cschrimson', 'chrimson', 'chr2', 'reachr', 'chrmine', 'chronos', 'cochr', 'gtacr'];
 const CALC = ['gcamp', 'jgcamp', 'rgeco', 'rcamp'];
-function detect(g) { if (!g) return { o: false, c: false }; const l = g.toLowerCase(); return { o: OPTO.some(k => l.includes(k)), c: CALC.some(k => l.includes(k)) }; }
+function detect(g, name) { const l = (g || '').toLowerCase(); const n = (name || '').toLowerCase(); return { o: OPTO.some(k => l.includes(k)), c: CALC.some(k => l.includes(k)) || n.includes('gfp') || l.includes('gfp') }; }
 function crossDetect(c, stocks) {
   const a = detect(stocks.find(s => s.id === c.parentA)?.genotype);
   const b = detect(stocks.find(s => s.id === c.parentB)?.genotype);
@@ -1188,8 +1202,9 @@ function makeDemoData() {
       name: 'Flo Stocks 1', status: 'declined', createdAt: addDays(t, -4) },
   ];
 
-  // Custom collection that is not in DEFAULT_CATS
-  const collections = [...DEFAULT_CATS.slice(0, -1), 'Opto Tools', 'No Collection'];
+  // Derive collections from stock categories
+  const cats = [...new Set(stocks.map(s => s.category).filter(Boolean))];
+  const collections = [...cats.filter(c => c !== 'No Collection'), 'No Collection'];
 
   return { stocks, crosses, virginBank, transfers, collections };
 }
@@ -2052,13 +2067,13 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
   function StockList({ onPick, exclude }) {
     return (
       <div>
-        <Inp placeholder="Search stocks..." value={search} onChange={e => setSearch(e.target.value)} className="mb-3" autoFocus />
+        <Inp placeholder="Search stocks..." value={search} onChange={e => setSearch(e.target.value)} className="mb-3" autoFocus={!isTouchDevice()} />
         {filteredStocks.length === 0 ? (
           <p className="text-sm text-center py-8" style={{ color: 'var(--text-3)' }}>No stocks found</p>
         ) : (
           <div className="grid gap-1 max-h-[50vh] overflow-y-auto">
             {filteredStocks.filter(s => !exclude || s.id !== exclude).map(s => {
-              const dc = detect(s.genotype);
+              const dc = detect(s.genotype, s.name);
               return (
                 <div key={s.id} onClick={() => { onPick(s); setSearch(''); }} className="stock-pick card-inner">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -2410,19 +2425,25 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
       {(() => {
         // Individual stocks: expanded + "No Collection" (only show if maintainer matches)
         const myStocks = stocks.filter(s => !s.maintainer || s.maintainer === currentUser);
-        const dueIndividual = myStocks.filter(s => (s.variant || 'stock') === 'expanded' || (s.category || 'Lab Stocks') === 'No Collection').filter(s => {
+        const dueIndividual = myStocks.filter(s => (s.category || 'No Collection') === 'No Collection').filter(s => {
           const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
           return age !== null && age >= getFlipDays(s);
         });
-        const dueCats = STOCK_CATS.filter(cat => cat !== 'No Collection').filter(cat => {
-          const catStocks = myStocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'Lab Stocks') === cat);
-          return catStocks.some(s => {
-            const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
-            const flipDays = getFlipDays(s);
-            return age !== null && age >= flipDays;
+        // Group collections by (cat, copies) — each copy number flips independently
+        const dueGroups = [];
+        STOCK_CATS.filter(cat => cat !== 'No Collection').forEach(cat => {
+          const catStocks = myStocks.filter(s => (s.category || 'No Collection') === cat);
+          const copyNums = [...new Set(catStocks.map(s => s.copies || 1))].sort((a, b) => a - b);
+          copyNums.forEach(cn => {
+            const group = catStocks.filter(s => (s.copies || 1) === cn);
+            const dueCount = group.filter(s => {
+              const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
+              return age !== null && age >= getFlipDays(s);
+            }).length;
+            if (dueCount > 0) dueGroups.push({ cat, copies: cn, stocks: group, dueCount, total: group.length });
           });
         });
-        if (dueIndividual.length === 0 && dueCats.length === 0) return null;
+        if (dueIndividual.length === 0 && dueGroups.length === 0) return null;
         return (
           <div ref={healthRef} className="mb-8">
             <p className="section-header">Stocks Due for Flipping</p>
@@ -2442,27 +2463,19 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                   </div>
                 </div>
               ))}
-              {dueCats.map(cat => {
-                const catStocks = myStocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'Lab Stocks') === cat);
-                const dueCount = catStocks.filter(s => {
-                  const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
-                  const flipDays = getFlipDays(s);
-                  return age !== null && age >= flipDays;
-                }).length;
-                return (
-                  <div key={cat} className="card p-5 cursor-pointer" style={{ borderColor: 'rgba(239,68,68,0.1)' }} onClick={() => { setFlipCat(cat); setFlipDate(today()); }}>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{cat}</p>
-                        <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>{catStocks.length} stock{catStocks.length !== 1 ? 's' : ''}</p>
-                      </div>
-                      <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
-                        {dueCount} to flip
-                      </span>
+              {dueGroups.map(g => (
+                <div key={`${g.cat}-${g.copies}`} className="card p-5 cursor-pointer" style={{ borderColor: 'rgba(239,68,68,0.1)' }} onClick={() => { setFlipCat({ cat: g.cat, copies: g.copies }); setFlipDate(today()); }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{g.cat}{g.copies > 1 || dueGroups.filter(x => x.cat === g.cat).length > 1 ? ` ×${g.copies}` : ''}</p>
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>{g.total} stock{g.total !== 1 ? 's' : ''}</p>
                     </div>
+                    <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
+                      {g.dueCount} to flip
+                    </span>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           </div>
         );
@@ -2487,14 +2500,14 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
 
 
       {/* Flip date modal for stock collections */}
-      <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${flipCat === '__expanded' ? 'Expanded' : flipCat} — Set Last Flipped`}>
+      <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${typeof flipCat === 'object' ? flipCat?.cat : flipCat} — Set Last Flipped`}>
         {flipCat && (() => {
-          const catStocks = flipCat === '__expanded'
-            ? stocks.filter(s => (s.variant || 'stock') === 'expanded')
-            : stocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'Lab Stocks') === flipCat);
+          const fc = typeof flipCat === 'object' ? flipCat : { cat: flipCat, copies: null };
+          const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || (s.copies || 1) === fc.copies));
+          const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` ×${fc.copies}` : '');
           return (
             <div>
-              <p className="text-xs mb-4" style={{ color: 'var(--text-3)' }}>Set the last flipped date for all {catStocks.length} stocks in {flipCat === '__expanded' ? 'Expanded' : flipCat}.</p>
+              <p className="text-xs mb-4" style={{ color: 'var(--text-3)' }}>Set the last flipped date for all {catStocks.length} stocks in {label}.</p>
               <Field label="Last flipped date">
                 <Inp type="date" value={flipDate} onChange={e => setFlipDate(e.target.value)} />
               </Field>
@@ -2502,7 +2515,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                 <Btn onClick={() => {
                   const ids = new Set(catStocks.map(s => s.id));
                   setStocks(p => p.map(s => ids.has(s.id) ? { ...s, lastFlipped: flipDate } : s));
-                  toast.add(`${flipCat === '__expanded' ? 'Expanded' : flipCat} flipped on ${fmt(flipDate)}`);
+                  toast.add(`${label} flipped on ${fmt(flipDate)}`);
                   setFlipCat(null);
                 }} className="flex-1">Set All Flipped</Btn>
                 <Btn v="s" onClick={() => setFlipCat(null)}>Cancel</Btn>
@@ -2543,6 +2556,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [addingCat, setAddingCat] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [collectionDetail, setCollectionDetail] = useState(null);
+  const [sortBy, setSortBy] = useLS('flo-sort', 'nextFlip');
 
   const filtered = useMemo(() => {
     let result = stocks;
@@ -2550,14 +2564,22 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     if (catFilter === 'expanded') {
       result = result.filter(s => (s.variant || 'stock') === 'expanded');
     } else if (catFilter !== 'all') {
-      result = result.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'Lab Stocks') === catFilter);
+      result = result.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === catFilter);
     }
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(s => [s.name, s.genotype || '', s.notes || ''].some(x => x.toLowerCase().includes(q)));
     }
+    result = [...result].sort((a, b) => {
+      if (sortBy === 'alpha') return (a.name || '').localeCompare(b.name || '');
+      if (sortBy === 'added') return (b.createdAt || '').localeCompare(a.createdAt || '');
+      // nextFlip: most urgent first (highest age/flipDays ratio)
+      const ra = a.lastFlipped ? -dFromNow(a.lastFlipped) / getFlipDays(a) : 0;
+      const rb = b.lastFlipped ? -dFromNow(b.lastFlipped) / getFlipDays(b) : 0;
+      return rb - ra;
+    });
     return result;
-  }, [stocks, search, catFilter, showAll, currentUser]);
+  }, [stocks, search, catFilter, showAll, currentUser, sortBy]);
 
   function flipStock(id) {
     setStocks(p => p.map(s => s.id === id ? { ...s, lastFlipped: today() } : s));
@@ -2569,6 +2591,78 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     setStocks(p => p.filter(x => x.id !== deleting));
     setDeleting(null);
     if (s) toast.add(`Deleted "${s.name}"`, () => setStocks(p => [...p, s]));
+  }
+
+  // Multi-select
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [bulkAction, setBulkAction] = useState(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkAppendText, setBulkAppendText] = useState('');
+  const [bulkCopyNum, setBulkCopyNum] = useState(1);
+  useEffect(() => { if (!selectMode) setSelected(new Set()); }, [selectMode]);
+  useEffect(() => { setSelected(new Set()); }, [catFilter, showAll, search]);
+
+  function toggleSelect(id) {
+    setSelected(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+  function selectAll() {
+    setSelected(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id)));
+  }
+  function bulkFlip() {
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, lastFlipped: today() } : s));
+    toast.add(`Flipped ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    setSelectMode(false);
+  }
+  function bulkDeleteConfirmed() {
+    const ids = selected;
+    const removed = stocks.filter(s => ids.has(s.id));
+    setStocks(p => p.filter(s => !ids.has(s.id)));
+    toast.add(`Deleted ${ids.size} stock${ids.size > 1 ? 's' : ''}`, () => setStocks(p => [...p, ...removed]));
+    setBulkDeleting(false);
+    setSelectMode(false);
+  }
+  function bulkSplit() {
+    const newStocks = [];
+    stocks.forEach(s => {
+      if (selected.has(s.id)) {
+        newStocks.push({ ...s, id: uid(), name: s.name + ' (copy)', createdAt: today(), lastFlipped: today() });
+      }
+    });
+    setStocks(p => [...p, ...newStocks]);
+    toast.add(`Split ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    setSelectMode(false);
+  }
+  function bulkMoveCollection(cat) {
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, category: cat } : s));
+    toast.add(`Moved ${selected.size} to ${cat}`);
+    setBulkAction(null);
+    setSelectMode(false);
+  }
+  function bulkChangeMaintainer(user) {
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, maintainer: user } : s));
+    toast.add(`${user} assigned to ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    setBulkAction(null);
+    setSelectMode(false);
+  }
+  function bulkSetCopies(n) {
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, copies: n } : s));
+    toast.add(`Set copies to ${n} on ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    setBulkAction(null);
+    setSelectMode(false);
+  }
+  function bulkAppend(text) {
+    if (!text.trim()) return;
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, name: s.name + text } : s));
+    toast.add(`Appended text to ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    setBulkAction(null);
+    setSelectMode(false);
+  }
+  function bulkPrint() {
+    const ids = [...selected];
+    setPrintList(p => [...new Set([...p, ...ids])]);
+    toast.add(`Added ${ids.length} to print list`);
+    setSelectMode(false);
   }
 
   return (
@@ -2591,6 +2685,19 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
             <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           {printList.length > 0 && <span>{printList.length}</span>}
         </button>
+        <button onClick={() => setSelectMode(m => !m)}
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95"
+          style={selectMode
+            ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }
+            : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
+          }>{selectMode ? 'Done' : 'Select'}</button>
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+          className="px-2 py-1.5 text-xs font-semibold rounded-lg"
+          style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', appearance: 'auto' }}>
+          <option value="nextFlip">Next Flip</option>
+          <option value="added">Last Added</option>
+          <option value="alpha">A–Z</option>
+        </select>
       </div>
       {/* Collection filter chips */}
       <div className="flex gap-2 mb-4 overflow-x-auto pb-2" style={{ WebkitOverflowScrolling: 'touch', position: 'relative', zIndex: 5 }}>
@@ -2609,7 +2716,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
 
       <div className="flex gap-3 mb-5">
         <Inp placeholder={catFilter === 'all' ? 'Search all stocks...' : `Search ${catFilter}...`} value={search} onChange={e => setSearch(e.target.value)} className="flex-1" />
-        <Btn onClick={() => setEditing({ id: null, name: '', genotype: '', category: catFilter === 'all' || catFilter === 'expanded' ? 'Lab Stocks' : catFilter, location: '25inc', notes: '', variant: catFilter === 'expanded' ? 'expanded' : 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser })}>+ Add</Btn>
+        <Btn onClick={() => setEditing({ id: null, name: '', genotype: '', category: catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter, location: '25inc', notes: '', variant: catFilter === 'expanded' ? 'expanded' : 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser, copies: 1 })}>+ Add</Btn>
       </div>
 
       {catFilter !== 'all' && catFilter !== 'expanded' && catFilter !== 'No Collection' && filtered.length > 0 && (() => {
@@ -2618,7 +2725,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
           return age !== null && age >= getFlipDays(s);
         }).length;
         const label = catFilter;
-        const allStocksInCat = stocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'Lab Stocks') === catFilter);
+        const allStocksInCat = stocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === catFilter);
         const maintainers = [...new Set(allStocksInCat.map(s => s.maintainer).filter(Boolean))];
         const collMaintainer = maintainers.length === 1 ? maintainers[0] : null;
         return (
@@ -2648,7 +2755,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
             const expandedStocks = filtered.filter(s => (s.variant || 'stock') === 'expanded');
             if (expandedStocks.length > 0) groups.push({ label: 'Expanded', items: expandedStocks });
             STOCK_CATS.forEach(cat => {
-              const catStocks = filtered.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'Lab Stocks') === cat);
+              const catStocks = filtered.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === cat);
               if (catStocks.length > 0) groups.push({ label: cat, items: catStocks });
             });
             return groups.map(({ label, items }) => (
@@ -2661,17 +2768,29 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                     const flipDays = getFlipDays(s);
                     const needsFlip = isMine && age !== null && age >= flipDays;
                     const nearFlip = isMine && age !== null && !needsFlip && age / flipDays >= 0.8;
-                    const dc = detect(s.genotype);
+                    const dc = detect(s.genotype, s.name);
                     return (
-                      <div key={s.id} className="card p-4" style={needsFlip ? { borderColor: 'rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.06)' } : nearFlip ? { borderColor: 'rgba(245,158,11,0.15)', background: 'rgba(245,158,11,0.06)' } : {}} onClick={() => setEditing({ ...s })}>
+                      <div key={s.id} className="card p-4" style={{
+                        ...(needsFlip ? { borderColor: 'rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.06)' } : nearFlip ? { borderColor: 'rgba(245,158,11,0.15)', background: 'rgba(245,158,11,0.06)' } : {}),
+                        ...(selectMode && selected.has(s.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-glow-2)', boxShadow: '0 0 20px var(--accent-glow-2)' } : {}),
+                      }} onClick={() => selectMode ? toggleSelect(s.id) : setEditing({ ...s })}>
                         <div className="flex items-start gap-3">
+                          {selectMode && (
+                            <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 transition-all"
+                              style={selected.has(s.id)
+                                ? { background: 'var(--accent)', border: '1px solid var(--accent)' }
+                                : { background: 'var(--surface)', border: '1px solid var(--border-2)' }}>
+                              {selected.has(s.id) && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                            </div>
+                          )}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap mb-0.5">
                               <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
-                              <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{(s.variant || 'stock') === 'expanded' ? '7d' : tempLabel(s.location)}</span>
+                              <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{(s.variant || 'stock') === 'expanded' ? '21d' : tempLabel(s.location)}</span>
                               {dc.o && <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }}>opto</span>}
                               {dc.c && <span className="badge" style={{ background: 'rgba(34,197,94,0.1)', color: '#86efac' }}>imaging</span>}
                               {s.maintainer && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{s.maintainer}</span>}
+                              {(s.copies || 1) > 1 && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>×{s.copies}</span>}
                             </div>
                             {s.genotype && s.genotype !== '+' && <p className="text-xs mono truncate" style={{ color: 'rgba(167,139,250,0.35)' }}>{s.genotype}</p>}
                             {isMine && age !== null && (
@@ -2695,7 +2814,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                               </div>
                             )}
                           </div>
-                          {isMine && needsFlip && (
+                          {!selectMode && isMine && needsFlip && (
                             <button onClick={e => { e.stopPropagation(); flipStock(s.id); }}
                               className="touch px-4 py-2 text-sm font-semibold rounded-xl transition-all active:scale-95 shrink-0"
                               style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
@@ -2725,7 +2844,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       {/* Collection detail modal */}
       <Modal open={!!collectionDetail} onClose={() => setCollectionDetail(null)} title={collectionDetail || ''}>
         {collectionDetail && (() => {
-          const allInCat = stocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'Lab Stocks') === collectionDetail);
+          const allInCat = stocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === collectionDetail);
           const mains = [...new Set(allInCat.map(s => s.maintainer).filter(Boolean))];
           const cm = mains.length === 1 ? mains[0] : null;
           const noMaint = allInCat.some(s => !s.maintainer);
@@ -2782,12 +2901,14 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       </Modal>
 
       {/* Flip all popup */}
-      <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${flipCat} — Set Last Flipped`}>
+      <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${typeof flipCat === 'object' ? flipCat?.cat : flipCat} — Set Last Flipped`}>
         {flipCat && (() => {
-          const catStocks = stocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'Lab Stocks') === flipCat);
+          const fc = typeof flipCat === 'object' ? flipCat : { cat: flipCat, copies: null };
+          const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || (s.copies || 1) === fc.copies));
+          const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` ×${fc.copies}` : '');
           return (
             <div>
-              <p className="text-xs mb-4" style={{ color: 'var(--text-3)' }}>Set the last flipped date for all {catStocks.length} stocks in {flipCat}.</p>
+              <p className="text-xs mb-4" style={{ color: 'var(--text-3)' }}>Set the last flipped date for all {catStocks.length} stocks in {label}.</p>
               <Field label="Last flipped date">
                 <Inp type="date" value={flipDate} onChange={e => setFlipDate(e.target.value)} />
               </Field>
@@ -2795,7 +2916,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                 <Btn onClick={() => {
                   const ids = new Set(catStocks.map(s => s.id));
                   setStocks(p => p.map(s => ids.has(s.id) ? { ...s, lastFlipped: flipDate } : s));
-                  toast.add(`${flipCat} flipped on ${fmt(flipDate)}`);
+                  toast.add(`${label} flipped on ${fmt(flipDate)}`);
                   setFlipCat(null);
                 }} className="flex-1">Set All Flipped</Btn>
                 <Btn v="s" onClick={() => setFlipCat(null)}>Cancel</Btn>
@@ -2808,7 +2929,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       {/* Add collection modal */}
       <Modal open={addingCat} onClose={() => setAddingCat(false)} title="New Collection">
         <Field label="Collection name">
-          <Inp value={newCatName} onChange={e => setNewCatName(e.target.value)} placeholder="e.g. Screen Stocks" autoFocus
+          <Inp value={newCatName} onChange={e => setNewCatName(e.target.value)} placeholder="e.g. Screen Stocks" autoFocus={!isTouchDevice()}
             onKeyDown={e => {
               if (e.key === 'Enter' && newCatName.trim() && !STOCK_CATS.includes(newCatName.trim())) {
                 const name = newCatName.trim();
@@ -2839,6 +2960,83 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
           <Btn v="s" onClick={() => setAddingCat(false)}>Cancel</Btn>
         </div>
       </Modal>
+
+      {/* Bulk action toolbar */}
+      {selectMode && selected.size > 0 && (
+        <div className="fixed left-0 right-0 z-30 flex justify-center px-4 anim-in" style={{ bottom: '80px' }}>
+          <div className="flex items-center gap-2 px-4 py-3 rounded-2xl max-w-lg w-full"
+            style={{ background: 'rgba(24,24,27,0.92)', backdropFilter: 'blur(20px) saturate(180%)', border: '1px solid var(--border-2)', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
+            <span className="text-xs font-semibold mr-auto" style={{ color: 'var(--text-2)' }}>{selected.size} selected</span>
+            <button onClick={selectAll} className="text-xs font-semibold px-2 py-1 rounded-lg" style={{ color: 'var(--accent-2)' }}>
+              {selected.size === filtered.length ? 'None' : 'All'}
+            </button>
+            <button onClick={bulkFlip} title="Flip" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(34,197,94,0.1)', color: '#86efac' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/></svg>
+            </button>
+            <button onClick={() => setBulkAction('collection')} title="Move" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(0,128,128,0.1)', color: '#5eead4' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            </button>
+            <button onClick={() => setBulkAction('maintainer')} title="Assign" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </button>
+            <button onClick={() => setBulkAction('copies')} title="Copies" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button onClick={() => { setBulkAppendText(''); setBulkAction('append'); }} title="Append text" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(245,158,11,0.1)', color: '#fcd34d' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <button onClick={bulkSplit} title="Split" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(0,128,128,0.1)', color: '#5eead4' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="16" y1="3" x2="16" y2="21"/><polyline points="8 17 12 21 16 21"/><polyline points="8 7 12 3 16 3"/></svg>
+            </button>
+            <button onClick={bulkPrint} title="Print" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(0,128,128,0.1)', color: '#5eead4' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            </button>
+            <button onClick={() => setBulkDeleting(true)} title="Delete" className="p-2 rounded-lg transition-all active:scale-95" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk action modals */}
+      <Confirm open={bulkDeleting} onOk={() => { bulkDeleteConfirmed(); }} onNo={() => setBulkDeleting(false)}
+        title={`Delete ${selected.size} stock${selected.size > 1 ? 's' : ''}?`}
+        msg="These stocks will be permanently removed." />
+
+      <Modal open={bulkAction === 'collection'} onClose={() => setBulkAction(null)} title="Move to Collection">
+        <div className="grid grid-cols-2 gap-2">
+          {STOCK_CATS.map(cat => (
+            <div key={cat} onClick={() => bulkMoveCollection(cat)} className="loc-card cursor-pointer">
+              <div className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>{cat}</div>
+            </div>
+          ))}
+        </div>
+      </Modal>
+
+      <Modal open={bulkAction === 'maintainer'} onClose={() => setBulkAction(null)} title="Assign Maintainer">
+        <div className="grid grid-cols-2 gap-2">
+          {USERS.map(u => (
+            <div key={u} onClick={() => bulkChangeMaintainer(u)} className="loc-card cursor-pointer">
+              <div className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>{u}</div>
+            </div>
+          ))}
+        </div>
+      </Modal>
+
+      <Modal open={bulkAction === 'copies'} onClose={() => setBulkAction(null)} title="Set Copy Number">
+        <Field label="Copies">
+          <Inp type="number" min="1" value={bulkCopyNum} onChange={e => setBulkCopyNum(Math.max(1, parseInt(e.target.value) || 1))} />
+        </Field>
+        <Btn onClick={() => bulkSetCopies(bulkCopyNum)} className="w-full mt-2">Set Copies</Btn>
+      </Modal>
+
+      <Modal open={bulkAction === 'append'} onClose={() => setBulkAction(null)} title="Append Text to Name">
+        <Field label="Text to append">
+          <Inp value={bulkAppendText} onChange={e => setBulkAppendText(e.target.value)} placeholder="e.g.  (2nd gen)" autoFocus={!isTouchDevice()}
+            onKeyDown={e => { if (e.key === 'Enter') bulkAppend(bulkAppendText); }} />
+        </Field>
+        <Btn onClick={() => bulkAppend(bulkAppendText)} className="w-full mt-2" disabled={!bulkAppendText.trim()}>Append</Btn>
+      </Modal>
     </div>
   );
 }
@@ -2856,6 +3054,20 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
     }
   }, [stock?.id, stock !== null]);
 
+  const saveRef = useRef(null);
+  useEffect(() => {
+    if (!stock) return;
+    const h = e => {
+      if (e.key !== 'Enter') return;
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (tag === 'textarea' || tag === 'select') return;
+      e.preventDefault();
+      saveRef.current?.();
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [!!stock]);
+
   if (!stock) return null;
   const isNew = !stock.id;
 
@@ -2864,7 +3076,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
     const saving = { ...f };
     // Auto-inherit collection maintainer when stock has no maintainer
     if ((saving.variant || 'stock') !== 'expanded' && saving.category && saving.category !== 'No Collection') {
-      const catStocks = stocks.filter(s => s.id !== saving.id && (s.variant || 'stock') !== 'expanded' && (s.category || 'Lab Stocks') === saving.category);
+      const catStocks = stocks.filter(s => s.id !== saving.id && (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === saving.category);
       const maintainers = [...new Set(catStocks.map(s => s.maintainer).filter(Boolean))];
       if (maintainers.length === 1 && !saving.maintainer) saving.maintainer = maintainers[0];
     }
@@ -2877,38 +3089,36 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
     }
     onClose();
   }
+  saveRef.current = save;
 
   return (
     <Modal open={!!stock} onClose={onClose} title={isNew ? 'New Stock' : <div className="flex items-center gap-2">{f.name || 'Edit Stock'}<button onClick={() => { const inList = printList && printList.includes(f.id); setPrintList(p => inList ? p.filter(x => x !== f.id) : [...p, f.id]); toast.add(inList ? 'Removed from print list' : 'Added to print list'); }} className="touch p-1.5 rounded-lg transition-all active:scale-90" style={{ color: printList && printList.includes(f.id) ? '#5eead4' : 'var(--text-3)' }} title={printList && printList.includes(f.id) ? 'In print list' : 'Add to print list'}><svg width="16" height="16" viewBox="0 0 24 24" fill={printList && printList.includes(f.id) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button></div>}>
       <Field label="Name *">
-        <Inp value={f.name || ''} onChange={e => { setF({ ...f, name: e.target.value }); setNameError(''); }} placeholder="e.g. Oregon-R" autoFocus />
+        <Inp value={f.name || ''} onChange={e => { const v = e.target.value; const upd = { ...f, name: v }; if (!f.source && !f.sourceId) { const g = guessSource(v); if (g) { upd.source = g.source; upd.sourceId = g.sourceId; } } setF(upd); setNameError(''); }} placeholder="e.g. Oregon-R" autoFocus={!isTouchDevice()} />
         {nameError && <p className="text-xs text-red-400 mt-1">{nameError}</p>}
+      </Field>
+      <Field label="Copies">
+        <Inp type="number" min="1" value={f.copies || 1} onChange={e => setF({ ...f, copies: Math.max(1, parseInt(e.target.value) || 1) })} />
       </Field>
       <Field label="Variant">
         <div className="grid grid-cols-2 gap-2">
           {STOCK_VARIANTS.map(v => (
             <div key={v} onClick={() => {
               const upd = { ...f, variant: v };
-              if (v === 'expanded') { upd.location = '25inc'; upd.category = null; }
+              if (v === 'expanded') { upd.location = '25inc'; }
               setF(upd);
             }} className={`loc-card ${(f.variant || 'stock') === v ? 'selected' : ''}`}>
               <div className="text-sm font-bold capitalize" style={{ color: 'var(--text-1)' }}>{v}</div>
-              <div className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>{v === 'expanded' ? '7d flip @ 25°C' : 'Variable flip'}</div>
+              <div className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>{v === 'expanded' ? '3wk flip @ 25°C' : 'Variable flip'}</div>
             </div>
           ))}
         </div>
       </Field>
-      {(f.variant || 'stock') !== 'expanded' && (
-        <Field label="Collection">
-          <div className="grid grid-cols-3 gap-2">
-            {STOCK_CATS.map(cat => (
-              <div key={cat} onClick={() => setF({ ...f, category: cat })} className={`loc-card ${f.category === cat ? 'selected' : ''}`}>
-                <div className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>{cat}</div>
-              </div>
-            ))}
-          </div>
-        </Field>
-      )}
+      <Field label="Collection">
+        <select value={f.category || 'No Collection'} onChange={e => setF({ ...f, category: e.target.value })} className="w-full px-4 py-3 text-sm rounded-xl" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>
+          {STOCK_CATS.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+        </select>
+      </Field>
       <Field label="Genotype">
         <Inp value={f.genotype || ''} onChange={e => setF({ ...f, genotype: e.target.value })} placeholder="e.g. w[1118]; UAS-CsChrimson/CyO" />
       </Field>
@@ -4055,6 +4265,19 @@ function App() {
   const [virginsPerCross, setVirginsPerCross] = useLS('flo-vpc', 5);
   const [transfers, setTransfers] = useLS('flo-transfers', []);
   const [collections, setCollections] = useLS('flo-collections', DEFAULT_CATS);
+  // Derive collections from stock categories — add missing, remove empty
+  useEffect(() => {
+    const stockCats = new Set(stocks.map(s => s.category).filter(Boolean));
+    const missing = [...stockCats].filter(c => !collections.includes(c));
+    const stale = collections.filter(c => c !== 'No Collection' && !stockCats.has(c));
+    if (missing.length > 0 || stale.length > 0) {
+      let next = collections.filter(c => !stale.includes(c));
+      const idx = next.indexOf('No Collection');
+      missing.forEach(c => { if (idx >= 0) next.splice(idx, 0, c); else next.push(c); });
+      if (!next.includes('No Collection')) next.push('No Collection');
+      setCollections(next);
+    }
+  }, [stocks]);
   const STOCK_CATS = collections;
   const [notifyVirgins, setNotifyVirgins] = useLS('flo-notify-virgins', false);
   const [printList, setPrintList] = useLS('flo-print-list', []);
@@ -4077,12 +4300,9 @@ function App() {
     hasPulled.current = true;
     setSyncStatus('Syncing...');
     sheetsPull(syncUrl).then(remote => {
-      if (remote.stocks && remote.stocks.length > 0) {
-        setStocks(local => mergeStocks(local, remote.stocks));
-      }
-      if (remote.crosses && remote.crosses.length > 0) {
-        setCrosses(local => mergeCrosses(local, remote.crosses));
-      }
+      // Sheet is source of truth on load — replace local data
+      if (remote.stocks) setStocks(remote.stocks);
+      if (remote.crosses) setCrosses(remote.crosses);
       // Sync PINs — store remote hashes locally if missing
       if (remote.pins && remote.pins.length > 0) {
         let pinSynced = false;
@@ -4241,7 +4461,7 @@ function App() {
           {tab === 'home' && <HomeScreen stocks={stocks} setStocks={setStocks} crosses={crosses} setCrosses={setCrosses} toast={toast} onNewCross={() => setNewCrossOpen(true)} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} currentUser={currentUser} onTransfer={createTransfer} transfers={myTransfers} onAcceptTransfer={(t) => {
             if (t.type === 'stock') setStocks(p => p.map(s => s.id === t.itemId ? { ...s, maintainer: currentUser } : s));
             else if (t.type === 'cross') setCrosses(p => p.map(c => c.id === t.itemId ? { ...c, owner: currentUser } : c));
-            else if (t.type === 'collection') setStocks(p => p.map(s => (s.category || 'Lab Stocks') === t.collection && s.maintainer === t.from ? { ...s, maintainer: currentUser } : s));
+            else if (t.type === 'collection') setStocks(p => p.map(s => (s.category || 'No Collection') === t.collection && s.maintainer === t.from ? { ...s, maintainer: currentUser } : s));
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: 'accepted' } : x));
             toast.add(`Accepted transfer from ${t.from}`);
           }} onDeclineTransfer={(t) => {

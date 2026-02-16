@@ -3141,9 +3141,11 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross 
 }
 
 /* ========== SETTINGS SCREEN ========== */
-function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setTransfers, setCollections, notifyVirgins, setNotifyVirgins, syncUrl, setSyncUrl, syncStatus, setSyncStatus }) {
+function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setTransfers, setCollections, notifyVirgins, setNotifyVirgins, syncUrl, setSyncUrl, syncStatus, setSyncStatus, currentUser }) {
   const fileRef = useRef(null);
   const [showRef, setShowRef] = useState(false);
+  const [syncUnlocked, setSyncUnlocked] = useState(false);
+  const [syncPinInput, setSyncPinInput] = useState('');
 
   function exportJSON() {
     const d = JSON.stringify({ stocks, crosses, exportedAt: new Date().toISOString() }, null, 2);
@@ -3293,34 +3295,55 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
         </div>
       </div>
 
+      {currentUser === 'Flo' && (
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Google Sheets Sync</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Sync stocks, crosses &amp; PINs to Google Sheets. See google-apps-script.js for setup.</p>
-        <Inp value={syncUrl} onChange={e => setSyncUrl(e.target.value)} placeholder="Apps Script web app URL" className="mb-2" />
-        {syncUrl && (
-          <div className="flex gap-2 mb-2">
-            <Btn v="s" onClick={() => {
-              setSyncStatus('Pushing...');
-              const pins = USERS.map(u => { const h = localStorage.getItem(`flo-pin-${u}`); return h ? { user: u, hash: h } : null; }).filter(Boolean);
-              sheetsPush(syncUrl, stocks, crosses, pins).then(r => {
-                setSyncStatus('Pushed ' + (r.stockCount || 0) + ' stocks, ' + (r.crossCount || 0) + ' crosses');
-                toast.add('Data pushed to sheet');
-              }).catch(e => { setSyncStatus('Push failed'); toast.add('Push failed: ' + e.message); });
-            }} className="flex-1">Push to Sheet</Btn>
-            <Btn v="s" onClick={() => {
-              setSyncStatus('Pulling...');
-              sheetsPull(syncUrl).then(remote => {
-                if (remote.stocks) setStocks(local => mergeStocks(local, remote.stocks));
-                if (remote.crosses) setCrosses(local => mergeCrosses(local, remote.crosses));
-                if (remote.pins) remote.pins.forEach(p => { if (p.user && p.hash && !localStorage.getItem(`flo-pin-${p.user}`)) localStorage.setItem(`flo-pin-${p.user}`, p.hash); });
-                setSyncStatus('Pulled ' + (remote.stocks || []).length + ' stocks, ' + (remote.crosses || []).length + ' crosses');
-                toast.add('Data pulled from sheet');
-              }).catch(e => { setSyncStatus('Pull failed'); toast.add('Pull failed: ' + e.message); });
-            }} className="flex-1">Pull from Sheet</Btn>
+        {!syncUnlocked ? (
+          <div>
+            <p className="text-xs mb-2" style={{ color: 'var(--text-3)' }}>Enter Flo's PIN to edit sync settings</p>
+            <div className="flex gap-2">
+              <Inp type="password" inputMode="numeric" maxLength="4" pattern="[0-9]*" value={syncPinInput} onChange={e => setSyncPinInput(e.target.value.replace(/\D/g, ''))} placeholder="PIN" style={{ width: 80, textAlign: 'center', letterSpacing: '0.3em' }} />
+              <Btn v="s" onClick={() => {
+                const floHash = localStorage.getItem('flo-pin-Flo');
+                if (!floHash) { toast.add('Flo has no PIN set'); return; }
+                hashPin(syncPinInput).then(h => {
+                  if (h === floHash) { setSyncUnlocked(true); setSyncPinInput(''); }
+                  else { toast.add('Wrong PIN'); setSyncPinInput(''); }
+                });
+              }}>Unlock</Btn>
+            </div>
           </div>
+        ) : (
+          <>
+            <Inp value={syncUrl} onChange={e => setSyncUrl(e.target.value)} placeholder="Apps Script web app URL" className="mb-2" />
+            {syncUrl && (
+              <div className="flex gap-2 mb-2">
+                <Btn v="s" onClick={() => {
+                  setSyncStatus('Pushing...');
+                  const pins = USERS.map(u => { const h = localStorage.getItem(`flo-pin-${u}`); return h ? { user: u, hash: h } : null; }).filter(Boolean);
+                  sheetsPush(syncUrl, stocks, crosses, pins).then(r => {
+                    setSyncStatus('Pushed ' + (r.stockCount || 0) + ' stocks, ' + (r.crossCount || 0) + ' crosses');
+                    toast.add('Data pushed to sheet');
+                  }).catch(e => { setSyncStatus('Push failed'); toast.add('Push failed: ' + e.message); });
+                }} className="flex-1">Push to Sheet</Btn>
+                <Btn v="s" onClick={() => {
+                  setSyncStatus('Pulling...');
+                  sheetsPull(syncUrl).then(remote => {
+                    if (remote.stocks) setStocks(local => mergeStocks(local, remote.stocks));
+                    if (remote.crosses) setCrosses(local => mergeCrosses(local, remote.crosses));
+                    if (remote.pins) remote.pins.forEach(p => { if (p.user && p.hash && !localStorage.getItem(`flo-pin-${p.user}`)) localStorage.setItem(`flo-pin-${p.user}`, p.hash); });
+                    setSyncStatus('Pulled ' + (remote.stocks || []).length + ' stocks, ' + (remote.crosses || []).length + ' crosses');
+                    toast.add('Data pulled from sheet');
+                  }).catch(e => { setSyncStatus('Pull failed'); toast.add('Pull failed: ' + e.message); });
+                }} className="flex-1">Pull from Sheet</Btn>
+              </div>
+            )}
+            {syncStatus && <p className="text-xs" style={{ color: 'var(--text-3)' }}>{syncStatus}</p>}
+          </>
         )}
-        {syncStatus && <p className="text-xs" style={{ color: 'var(--text-3)' }}>{syncStatus}</p>}
       </div>
+      )}
 
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Virgin Collection Reminders</p>
@@ -4144,7 +4167,7 @@ function App() {
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} />}
           {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} onOpenPrint={() => setPrintOpen(true)} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
-          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} syncUrl={syncUrl} setSyncUrl={setSyncUrl} syncStatus={syncStatus} setSyncStatus={setSyncStatus} />}
+          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} syncUrl={syncUrl} setSyncUrl={setSyncUrl} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
         </div>
       </main>
 

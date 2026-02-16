@@ -2610,10 +2610,11 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   function selectAll() {
     setSelected(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id)));
   }
+  function exitSelect() { setSelectMode(false); onBulkActive?.(false); }
   function bulkFlip() {
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, lastFlipped: today() } : s));
     toast.add(`Flipped ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
-    setSelectMode(false);
+    exitSelect();
   }
   function bulkDeleteConfirmed() {
     const ids = selected;
@@ -2621,7 +2622,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     setStocks(p => p.filter(s => !ids.has(s.id)));
     toast.add(`Deleted ${ids.size} stock${ids.size > 1 ? 's' : ''}`, () => setStocks(p => [...p, ...removed]));
     setBulkDeleting(false);
-    setSelectMode(false);
+    exitSelect();
   }
   function bulkSplit() {
     const newStocks = [];
@@ -2632,38 +2633,38 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     });
     setStocks(p => [...p, ...newStocks]);
     toast.add(`Split ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
-    setSelectMode(false);
+    exitSelect();
   }
   function bulkMoveCollection(cat) {
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, category: cat } : s));
     toast.add(`Moved ${selected.size} to ${cat}`);
     setBulkAction(null);
-    setSelectMode(false);
+    exitSelect();
   }
   function bulkChangeMaintainer(user) {
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, maintainer: user } : s));
     toast.add(`${user} assigned to ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
     setBulkAction(null);
-    setSelectMode(false);
+    exitSelect();
   }
   function bulkSetCopies(n) {
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, copies: n } : s));
-    toast.add(`Set copies to ${n} on ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    toast.add(`Set copy to ${n} on ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
     setBulkAction(null);
-    setSelectMode(false);
+    exitSelect();
   }
   function bulkAppend(text) {
     if (!text.trim()) return;
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, name: s.name + text } : s));
     toast.add(`Appended text to ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
     setBulkAction(null);
-    setSelectMode(false);
+    exitSelect();
   }
   function bulkPrint() {
     const ids = [...selected];
     setPrintList(p => [...new Set([...p, ...ids])]);
     toast.add(`Added ${ids.length} to print list`);
-    setSelectMode(false);
+    exitSelect();
   }
 
   return (

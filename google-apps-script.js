@@ -17,7 +17,7 @@
 const STOCK_HEADERS = [
   'id', 'name', 'genotype', 'variant', 'category', 'location',
   'source', 'sourceId', 'flybaseId', 'maintainer', 'notes',
-  'isGift', 'giftFrom', 'createdAt', 'lastFlipped'
+  'isGift', 'giftFrom', 'createdAt', 'lastFlipped', 'copies'
 ];
 
 const CROSS_HEADERS = [

@@ -2468,7 +2468,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                 <div key={`${g.cat}-${g.copies}`} className="card p-5 cursor-pointer" style={{ borderColor: 'rgba(239,68,68,0.1)' }} onClick={() => { setFlipCat({ cat: g.cat, copies: g.copies }); setFlipDate(today()); }}>
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{g.cat}{g.copies > 1 || dueGroups.filter(x => x.cat === g.cat).length > 1 ? ` ×${g.copies}` : ''}</p>
+                      <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{g.cat}{g.copies > 1 || dueGroups.filter(x => x.cat === g.cat).length > 1 ? ` #${g.copies}` : ''}</p>
                       <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>{g.total} stock{g.total !== 1 ? 's' : ''}</p>
                     </div>
                     <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
@@ -2505,7 +2505,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
         {flipCat && (() => {
           const fc = typeof flipCat === 'object' ? flipCat : { cat: flipCat, copies: null };
           const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || (s.copies || 1) === fc.copies));
-          const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` ×${fc.copies}` : '');
+          const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` #${fc.copies}` : '');
           return (
             <div>
               <p className="text-xs mb-4" style={{ color: 'var(--text-3)' }}>Set the last flipped date for all {catStocks.length} stocks in {label}.</p>
@@ -2707,7 +2707,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
           className="compact px-2 py-1.5 font-semibold rounded-lg shrink-0"
           style={{ color: copyFilter !== 'all' ? '#93c5fd' : 'var(--text-3)', border: copyFilter !== 'all' ? '1px solid rgba(59,130,246,0.3)' : '1px solid var(--border)', background: copyFilter !== 'all' ? 'rgba(59,130,246,0.1)' : 'var(--surface-2)', appearance: 'auto', maxWidth: '70px' }}>
           <option value="all">Copy</option>
-          {copyNumbers.map(n => <option key={n} value={n}>×{n}</option>)}
+          {copyNumbers.map(n => <option key={n} value={n}>{n}</option>)}
         </select>}
         <div className="flex-1" />
         {/* Print */}
@@ -2825,7 +2825,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                               {dc.o && <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }}>opto</span>}
                               {dc.c && <span className="badge" style={{ background: 'rgba(34,197,94,0.1)', color: '#86efac' }}>imaging</span>}
                               {s.maintainer && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{s.maintainer}</span>}
-                              {(s.copies || 1) > 1 && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>×{s.copies}</span>}
+                              {(s.copies || 1) > 1 && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>{s.copies}</span>}
                             </div>
                             {s.genotype && s.genotype !== '+' && <p className="text-xs mono truncate" style={{ color: 'rgba(167,139,250,0.35)' }}>{s.genotype}</p>}
                             {isMine && age !== null && (
@@ -2940,7 +2940,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         {flipCat && (() => {
           const fc = typeof flipCat === 'object' ? flipCat : { cat: flipCat, copies: null };
           const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || (s.copies || 1) === fc.copies));
-          const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` ×${fc.copies}` : '');
+          const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` #${fc.copies}` : '');
           return (
             <div>
               <p className="text-xs mb-4" style={{ color: 'var(--text-3)' }}>Set the last flipped date for all {catStocks.length} stocks in {label}.</p>

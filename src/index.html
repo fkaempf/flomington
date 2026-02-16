@@ -2436,7 +2436,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
           const catStocks = myStocks.filter(s => (s.category || 'No Collection') === cat);
           const copyNums = [...new Set(catStocks.map(s => s.copies || 1))].sort((a, b) => a - b);
           copyNums.forEach(cn => {
-            const group = catStocks.filter(s => (s.copies || 1) === cn);
+            const group = catStocks.filter(s => Number(s.copies || 1) === cn);
             const dueCount = group.filter(s => {
               const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
               return age !== null && age >= getFlipDays(s);
@@ -2504,7 +2504,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
       <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${typeof flipCat === 'object' ? flipCat?.cat : flipCat} — Set Last Flipped`}>
         {flipCat && (() => {
           const fc = typeof flipCat === 'object' ? flipCat : { cat: flipCat, copies: null };
-          const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || (s.copies || 1) === fc.copies));
+          const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || Number(s.copies || 1) === fc.copies));
           const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` #${fc.copies}` : '');
           return (
             <div>
@@ -2560,7 +2560,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [sortBy, setSortBy] = useLS('flo-sort', 'nextFlip');
   const [copyFilter, setCopyFilter] = useState('all');
 
-  const copyNumbers = useMemo(() => [...new Set(stocks.map(s => s.copies || 1))].sort((a, b) => a - b), [stocks]);
+  const copyNumbers = useMemo(() => [...new Set(stocks.map(s => Number(s.copies) || 1))].sort((a, b) => a - b), [stocks]);
   const hasCopies = copyNumbers.some(n => n > 1);
 
   const filtered = useMemo(() => {
@@ -2571,7 +2571,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     } else if (catFilter !== 'all') {
       result = result.filter(s => (s.category || 'No Collection') === catFilter);
     }
-    if (copyFilter !== 'all') result = result.filter(s => (s.copies || 1) === Number(copyFilter));
+    if (copyFilter !== 'all') result = result.filter(s => Number(s.copies || 1) === Number(copyFilter));
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(s => [s.name, s.genotype || '', s.notes || ''].some(x => x.toLowerCase().includes(q)));
@@ -2605,9 +2605,10 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [bulkAction, setBulkAction] = useState(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkAppendText, setBulkAppendText] = useState('');
+  const [bulkFlipDate, setBulkFlipDate] = useState('');
 
   useEffect(() => { if (!selectMode) setSelected(new Set()); }, [selectMode]);
-  useEffect(() => { setSelected(new Set()); setCopyFilter('all'); }, [catFilter, showAll, search]);
+  useEffect(() => { setSelected(new Set()); }, [catFilter, showAll, search]);
   useEffect(() => () => onBulkActive?.(false), []);
 
   function toggleSelect(id) {
@@ -2620,6 +2621,12 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   function bulkFlip() {
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, lastFlipped: today() } : s));
     toast.add(`Flipped ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    exitSelect();
+  }
+  function bulkSetFlipDate(d) {
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, lastFlipped: d } : s));
+    toast.add(`Set flip date on ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    setBulkAction(null);
     exitSelect();
   }
   function bulkDeleteConfirmed() {
@@ -2939,7 +2946,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${typeof flipCat === 'object' ? flipCat?.cat : flipCat} — Set Last Flipped`}>
         {flipCat && (() => {
           const fc = typeof flipCat === 'object' ? flipCat : { cat: flipCat, copies: null };
-          const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || (s.copies || 1) === fc.copies));
+          const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || Number(s.copies || 1) === fc.copies));
           const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` #${fc.copies}` : '');
           return (
             <div>
@@ -3012,6 +3019,10 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/></svg>
               <span className="text-[9px]">Flip</span>
             </div>
+            <div title="Set last flip date on selected" onClick={dis ? undefined : () => { setBulkFlipDate(today()); setBulkAction('flipdate'); }} className={btnCls} style={dis ? { ...disStyle, color: '#86efac' } : { color: '#86efac' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span className="text-[9px]">Date</span>
+            </div>
             <div title="Move selected to a collection" onClick={dis ? undefined : () => setBulkAction('collection')} className={btnCls} style={dis ? { ...disStyle, color: '#5eead4' } : { color: '#5eead4' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               <span className="text-[9px]">Move</span>
@@ -3065,6 +3076,13 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </div>
       </Modal>
 
+
+      <Modal open={bulkAction === 'flipdate'} onClose={() => setBulkAction(null)} title="Set Last Flip Date">
+        <Field label="Date">
+          <Inp type="date" value={bulkFlipDate} onChange={e => setBulkFlipDate(e.target.value)} />
+        </Field>
+        <Btn onClick={() => bulkSetFlipDate(bulkFlipDate)} className="w-full mt-2" disabled={!bulkFlipDate}>Set Date</Btn>
+      </Modal>
 
       <Modal open={bulkAction === 'append'} onClose={() => setBulkAction(null)} title="Append Text to Name">
         <Field label="Text to append">

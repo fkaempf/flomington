@@ -1,0 +1,10 @@
+{
+  "name": "flomington",
+  "private": true,
+  "scripts": {
+    "encrypt": "staticrypt index.html -d dist --short --remember 30 --template-title 'Flomington' --template-instructions 'Enter the lab password to access the fly stock manager.' --template-color-primary '#8b5cf6' --template-color-secondary '#09090b'"
+  },
+  "devDependencies": {
+    "staticrypt": "^3.0.0"
+  }
+}

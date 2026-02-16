@@ -402,7 +402,7 @@ const fmt = d => { if (!d) return '—'; return new Date(d + 'T12:00:00').toLoca
 const fmtFull = d => { if (!d) return '—'; return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); };
 const isPast = d => d < today();
 const isToday = d => d === today();
-const dFromNow = d => Math.round((new Date(d + 'T12:00:00') - new Date(today() + 'T12:00:00')) / 864e5);
+const dFromNow = d => { if (!d) return 0; const ms = new Date(d + 'T12:00:00') - new Date(today() + 'T12:00:00'); return isNaN(ms) ? 0 : Math.round(ms / 864e5); };
 
 /* ========== SHEETS SYNC ========== */
 const SYNC_FIELDS = ['id', 'name', 'genotype', 'variant', 'category', 'location', 'source', 'sourceId', 'flybaseId', 'maintainer', 'notes', 'isGift', 'giftFrom', 'createdAt', 'lastFlipped'];

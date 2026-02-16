@@ -2529,7 +2529,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
 }
 
 /* ========== STOCKS SCREEN ========== */
-function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, onOpenPrint }) {
+function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, onOpenPrint, onBulkActive }) {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState(() => initialStockId ? 'all' : 'all');
   const [showAll, setShowAll] = useState(() => !!initialStockId);
@@ -2602,6 +2602,8 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [bulkCopyNum, setBulkCopyNum] = useState(1);
   useEffect(() => { if (!selectMode) setSelected(new Set()); }, [selectMode]);
   useEffect(() => { setSelected(new Set()); }, [catFilter, showAll, search]);
+  const bulkActive = selectMode && selected.size > 0;
+  useEffect(() => { onBulkActive?.(bulkActive); return () => onBulkActive?.(false); }, [bulkActive]);
 
   function toggleSelect(id) {
     setSelected(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
@@ -2961,11 +2963,11 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </div>
       </Modal>
 
-      {/* Bulk action toolbar */}
-      {selectMode && selected.size > 0 && (
-        <div className="fixed left-0 right-0 z-30 flex justify-center px-4 anim-in" style={{ bottom: '80px' }}>
-          <div className="flex items-center gap-2 px-4 py-3 rounded-2xl max-w-lg w-full"
-            style={{ background: 'rgba(24,24,27,0.92)', backdropFilter: 'blur(20px) saturate(180%)', border: '1px solid var(--border-2)', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
+      {/* Bulk action toolbar — replaces bottom nav */}
+      {bulkActive && (
+        <div className="fixed left-1/2 z-40 anim-in" style={{ bottom: '16px', transform: 'translateX(-50%)' }}>
+          <div className="flex items-center gap-2 px-4 py-2 rounded-full"
+            style={{ background: 'rgba(24,24,27,0.85)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03)' }}>
             <span className="text-xs font-semibold mr-auto" style={{ color: 'var(--text-2)' }}>{selected.size} selected</span>
             <button onClick={selectAll} className="text-xs font-semibold px-2 py-1 rounded-lg" style={{ color: 'var(--accent-2)' }}>
               {selected.size === filtered.length ? 'None' : 'All'}
@@ -4283,6 +4285,7 @@ function App() {
   const [printList, setPrintList] = useLS('flo-print-list', []);
   const [printListCrosses, setPrintListCrosses] = useLS('flo-print-crosses', []);
   const [printOpen, setPrintOpen] = useState(false);
+  const [bulkBarActive, setBulkBarActive] = useState(false);
   const SHEETS_SYNC_URL = 'https://script.google.com/macros/s/AKfycbxuR_-oBOJlg4bwL-A0S1wIF2irDL0zky57REwP_kLEHBnhy8fgUm_MpSk4ct22kHCdKw/exec';
   const [syncUrl, setSyncUrl] = useLS('flo-sync-url', SHEETS_SYNC_URL);
   useEffect(() => { if (!syncUrl) setSyncUrl(SHEETS_SYNC_URL); }, []);
@@ -4470,14 +4473,14 @@ function App() {
           }} STOCK_CATS={STOCK_CATS} sentTransfers={sentResolved} onDismissTransfer={(t) => {
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} />}
-          {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} onOpenPrint={() => setPrintOpen(true)} />}
+          {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
           {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} syncUrl={syncUrl} setSyncUrl={setSyncUrl} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
         </div>
       </main>
 
       {/* Floating pill navigation */}
-      <nav className="bottom-nav">
+      <nav className="bottom-nav" style={bulkBarActive ? { display: 'none' } : {}}>
         <div onClick={() => setTab('home')} className={`nav-item ${tab === 'home' ? 'active' : ''}`}>
           {IconHome(tab === 'home')}
           <span style={{ color: tab === 'home' ? 'var(--accent-2)' : 'var(--text-3)' }}>Home</span>

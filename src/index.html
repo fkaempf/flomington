@@ -4025,21 +4025,22 @@ const LABEL_FORMATS = {
 function crossLabelText(c, stocks) {
   const name = `♀ ${sn(stocks, c.parentA)} x ♂ ${sn(stocks, c.parentB)}`;
   const tl = getTL(c);
+  const nw = d => d ? `<span style="white-space:nowrap">${d}</span>` : '';
   let action = '';
   if (c.status === 'waiting for virgins' || c.status === 'collecting virgins') {
-    action = `Collect virgins from ${tl.virginStart}`;
+    action = `Collect virgins from ${nw(tl.virginStart)}`;
   } else if (c.status === 'waiting for progeny' || c.status === 'collecting progeny') {
-    action = `Collect progeny from ${tl.progenyStart}`;
+    action = `Collect progeny from ${nw(tl.progenyStart)}`;
   } else if (c.status === 'screening') {
     action = 'Screening';
   } else if (c.status === 'ripening') {
     action = 'Ripening';
   } else if (c.status === 'set up') {
-    action = `Set up ${c.setupDate || ''}`;
+    action = `Set up ${nw(c.setupDate || '')}`;
   } else if (c.status === 'done') {
     action = 'Done';
   }
-  return { name, action, temp: tempLabel(c.temperature) };
+  return { name, action, temp: '' };
 }
 
 function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCrosses, setPrintListCrosses, stocks, crosses, toast }) {

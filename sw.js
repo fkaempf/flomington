@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flomington-v1';
+const CACHE_NAME = 'flomington-v2';
 const ASSETS = [
   './',
   './index.html',

@@ -74,6 +74,7 @@ input, textarea, select {
   letter-spacing: -0.01em;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
+select.compact { font-size: 11px !important; color: inherit !important; background: inherit !important; }
 input:focus, textarea:focus, select:focus {
   border-color: var(--accent) !important;
   outline: none;
@@ -2557,6 +2558,10 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [newCatName, setNewCatName] = useState('');
   const [collectionDetail, setCollectionDetail] = useState(null);
   const [sortBy, setSortBy] = useLS('flo-sort', 'nextFlip');
+  const [copyFilter, setCopyFilter] = useState('all');
+
+  const copyNumbers = useMemo(() => [...new Set(stocks.map(s => s.copies || 1))].sort((a, b) => a - b), [stocks]);
+  const hasCopies = copyNumbers.some(n => n > 1);
 
   const filtered = useMemo(() => {
     let result = stocks;
@@ -2566,6 +2571,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     } else if (catFilter !== 'all') {
       result = result.filter(s => (s.category || 'No Collection') === catFilter);
     }
+    if (copyFilter !== 'all') result = result.filter(s => (s.copies || 1) === Number(copyFilter));
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(s => [s.name, s.genotype || '', s.notes || ''].some(x => x.toLowerCase().includes(q)));
@@ -2579,7 +2585,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       return rb - ra;
     });
     return result;
-  }, [stocks, search, catFilter, showAll, currentUser, sortBy]);
+  }, [stocks, search, catFilter, showAll, currentUser, sortBy, copyFilter]);
 
   function flipStock(id) {
     setStocks(p => p.map(s => s.id === id ? { ...s, lastFlipped: today() } : s));
@@ -2599,9 +2605,9 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [bulkAction, setBulkAction] = useState(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkAppendText, setBulkAppendText] = useState('');
-  const [bulkCopyNum, setBulkCopyNum] = useState(1);
+
   useEffect(() => { if (!selectMode) setSelected(new Set()); }, [selectMode]);
-  useEffect(() => { setSelected(new Set()); }, [catFilter, showAll, search]);
+  useEffect(() => { setSelected(new Set()); setCopyFilter('all'); }, [catFilter, showAll, search]);
   useEffect(() => () => onBulkActive?.(false), []);
 
   function toggleSelect(id) {
@@ -2624,15 +2630,18 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     setBulkDeleting(false);
     exitSelect();
   }
-  function bulkSplit() {
-    const newStocks = [];
-    stocks.forEach(s => {
-      if (selected.has(s.id)) {
-        newStocks.push({ ...s, id: uid(), name: s.name + ' (copy)', createdAt: today(), lastFlipped: today() });
-      }
+  function bulkCopy() {
+    setStocks(p => {
+      const newStocks = [];
+      p.forEach(s => {
+        if (selected.has(s.id)) {
+          const maxCopy = Math.max(...p.filter(x => x.name === s.name).map(x => x.copies || 1));
+          newStocks.push({ ...s, id: uid(), copies: maxCopy + 1, createdAt: today(), lastFlipped: today() });
+        }
+      });
+      return [...p, ...newStocks];
     });
-    setStocks(p => [...p, ...newStocks]);
-    toast.add(`Split ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    toast.add(`Copied ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
     exitSelect();
   }
   function bulkMoveCollection(cat) {
@@ -2644,12 +2653,6 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   function bulkChangeMaintainer(user) {
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, maintainer: user } : s));
     toast.add(`${user} assigned to ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
-    setBulkAction(null);
-    exitSelect();
-  }
-  function bulkSetCopies(n) {
-    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, copies: n } : s));
-    toast.add(`Set copy to ${n} on ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
     setBulkAction(null);
     exitSelect();
   }
@@ -2694,12 +2697,18 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </div>
         {/* Sort */}
         <select value={sortBy} onChange={e => setSortBy(e.target.value)}
-          className="px-2 py-1.5 font-semibold rounded-lg shrink-0"
-          style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', appearance: 'auto', maxWidth: '90px', fontSize: '11px' }}>
+          className="compact px-2 py-1.5 font-semibold rounded-lg shrink-0"
+          style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', appearance: 'auto', maxWidth: '90px' }}>
           <option value="nextFlip">Flip</option>
           <option value="added">Added</option>
           <option value="alpha">A–Z</option>
         </select>
+        {hasCopies && <select value={copyFilter} onChange={e => setCopyFilter(e.target.value)}
+          className="compact px-2 py-1.5 font-semibold rounded-lg shrink-0"
+          style={{ color: copyFilter !== 'all' ? '#93c5fd' : 'var(--text-3)', border: copyFilter !== 'all' ? '1px solid rgba(59,130,246,0.3)' : '1px solid var(--border)', background: copyFilter !== 'all' ? 'rgba(59,130,246,0.1)' : 'var(--surface-2)', appearance: 'auto', maxWidth: '70px' }}>
+          <option value="all">Copy</option>
+          {copyNumbers.map(n => <option key={n} value={n}>×{n}</option>)}
+        </select>}
         <div className="flex-1" />
         {/* Print */}
         <button onClick={onOpenPrint} title={`Print labels${printList.length > 0 ? ` (${printList.length})` : ''}`}
@@ -3011,17 +3020,13 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
               <span className="text-[9px]">Assign</span>
             </div>
-            <div title="Set copy number on selected" onClick={dis ? undefined : () => setBulkAction('copies')} className={btnCls} style={dis ? { ...disStyle, color: '#93c5fd' } : { color: '#93c5fd' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-              <span className="text-[9px]">Copy</span>
-            </div>
             <div title="Append text to selected stock names" onClick={dis ? undefined : () => { setBulkAppendText(''); setBulkAction('append'); }} className={btnCls} style={dis ? { ...disStyle, color: '#fcd34d' } : { color: '#fcd34d' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               <span className="text-[9px]">Append</span>
             </div>
-            <div title="Duplicate selected stocks as new copies" onClick={dis ? undefined : bulkSplit} className={btnCls} style={dis ? { ...disStyle, color: '#5eead4' } : { color: '#5eead4' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="16" y1="3" x2="16" y2="21"/><polyline points="8 17 12 21 16 21"/><polyline points="8 7 12 3 16 3"/></svg>
-              <span className="text-[9px]">Split</span>
+            <div title="Add +1 copy to selected stocks" onClick={dis ? undefined : bulkCopy} className={btnCls} style={dis ? { ...disStyle, color: '#93c5fd' } : { color: '#93c5fd' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span className="text-[9px]">+Copy</span>
             </div>
             <div title="Add selected to print queue" onClick={dis ? undefined : bulkPrint} className={btnCls} style={dis ? { ...disStyle, color: '#5eead4' } : { color: '#5eead4' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
@@ -3060,12 +3065,6 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </div>
       </Modal>
 
-      <Modal open={bulkAction === 'copies'} onClose={() => setBulkAction(null)} title="Set Copy Number">
-        <Field label="Copy">
-          <Inp type="number" min="1" value={bulkCopyNum} onChange={e => setBulkCopyNum(Math.max(1, parseInt(e.target.value) || 1))} />
-        </Field>
-        <Btn onClick={() => bulkSetCopies(bulkCopyNum)} className="w-full mt-2">Set Copy</Btn>
-      </Modal>
 
       <Modal open={bulkAction === 'append'} onClose={() => setBulkAction(null)} title="Append Text to Name">
         <Field label="Text to append">

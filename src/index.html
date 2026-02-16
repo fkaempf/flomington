@@ -2564,7 +2564,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     if (catFilter === 'expanded') {
       result = result.filter(s => (s.variant || 'stock') === 'expanded');
     } else if (catFilter !== 'all') {
-      result = result.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === catFilter);
+      result = result.filter(s => (s.category || 'No Collection') === catFilter);
     }
     if (search) {
       const q = search.toLowerCase();
@@ -2726,7 +2726,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
           return age !== null && age >= getFlipDays(s);
         }).length;
         const label = catFilter;
-        const allStocksInCat = stocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === catFilter);
+        const allStocksInCat = stocks.filter(s => (s.category || 'No Collection') === catFilter);
         const maintainers = [...new Set(allStocksInCat.map(s => s.maintainer).filter(Boolean))];
         const collMaintainer = maintainers.length === 1 ? maintainers[0] : null;
         return (
@@ -2845,7 +2845,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       {/* Collection detail modal */}
       <Modal open={!!collectionDetail} onClose={() => setCollectionDetail(null)} title={collectionDetail || ''}>
         {collectionDetail && (() => {
-          const allInCat = stocks.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === collectionDetail);
+          const allInCat = stocks.filter(s => (s.category || 'No Collection') === collectionDetail);
           const mains = [...new Set(allInCat.map(s => s.maintainer).filter(Boolean))];
           const cm = mains.length === 1 ? mains[0] : null;
           const noMaint = allInCat.some(s => !s.maintainer);
@@ -3087,8 +3087,8 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
     if (!f.name?.trim()) { setNameError('Name is required'); return; }
     const saving = { ...f };
     // Auto-inherit collection maintainer when stock has no maintainer
-    if ((saving.variant || 'stock') !== 'expanded' && saving.category && saving.category !== 'No Collection') {
-      const catStocks = stocks.filter(s => s.id !== saving.id && (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === saving.category);
+    if (saving.category && saving.category !== 'No Collection') {
+      const catStocks = stocks.filter(s => s.id !== saving.id && (s.category || 'No Collection') === saving.category);
       const maintainers = [...new Set(catStocks.map(s => s.maintainer).filter(Boolean))];
       if (maintainers.length === 1 && !saving.maintainer) saving.maintainer = maintainers[0];
     }

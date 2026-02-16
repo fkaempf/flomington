@@ -401,28 +401,49 @@ const dFromNow = d => { if (!d) return 0; const ms = new Date(d + 'T12:00:00') -
 
 /* ========== SHEETS SYNC ========== */
 const SYNC_FIELDS = ['id', 'name', 'genotype', 'variant', 'category', 'location', 'source', 'sourceId', 'flybaseId', 'maintainer', 'notes', 'isGift', 'giftFrom', 'createdAt', 'lastFlipped'];
+const CROSS_SYNC_FIELDS = ['id', 'parentA', 'parentB', 'temperature', 'setupDate', 'status', 'owner', 'notes', 'targetCount', 'collected', 'vials', 'virginsCollected', 'manualFlipDate', 'manualEcloseDate', 'manualVirginDate', 'crossType', 'parentCrossId', 'experimentType', 'experimentDate', 'retinalStartDate', 'waitStartDate', 'ripeningStartDate'];
 
 async function sheetsPull(url) {
   const res = await fetch(url);
   const data = await res.json();
   if (data.error) throw new Error(data.error);
-  return (data.stocks || []).map(s => {
+  const stocks = (data.stocks || []).map(s => {
     if (s.isGift === 'true') s.isGift = true;
     else if (s.isGift === 'false' || s.isGift === '') delete s.isGift;
     return s;
   });
+  const crosses = (data.crosses || []).map(c => {
+    if (typeof c.collected === 'string') try { c.collected = JSON.parse(c.collected); } catch { c.collected = []; }
+    else if (!c.collected) c.collected = [];
+    if (typeof c.vials === 'string') try { c.vials = JSON.parse(c.vials); } catch { c.vials = []; }
+    else if (!c.vials) c.vials = [];
+    if (c.targetCount) c.targetCount = parseInt(c.targetCount) || 0;
+    if (c.virginsCollected) c.virginsCollected = parseInt(c.virginsCollected) || 0;
+    return c;
+  });
+  const pins = data.pins || [];
+  return { stocks, crosses, pins };
 }
 
-async function sheetsPush(url, stocks) {
-  const clean = stocks.map(s => {
+async function sheetsPush(url, stocks, crosses, pins) {
+  const cleanStocks = stocks.map(s => {
     const o = {};
     SYNC_FIELDS.forEach(k => { if (s[k] !== undefined && s[k] !== null) o[k] = s[k]; });
+    return o;
+  });
+  const cleanCrosses = (crosses || []).map(c => {
+    const o = {};
+    CROSS_SYNC_FIELDS.forEach(k => {
+      if (c[k] !== undefined && c[k] !== null) {
+        o[k] = Array.isArray(c[k]) ? JSON.stringify(c[k]) : c[k];
+      }
+    });
     return o;
   });
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ stocks: clean }),
+    body: JSON.stringify({ stocks: cleanStocks, crosses: cleanCrosses, pins: pins || [] }),
     redirect: 'follow',
   });
   const data = await res.json();
@@ -435,6 +456,15 @@ function mergeStocks(local, remote) {
   const localIds = new Set(local.map(s => s.id));
   remote.forEach(rs => {
     if (!localIds.has(rs.id)) merged.push(rs);
+  });
+  return merged;
+}
+
+function mergeCrosses(local, remote) {
+  const merged = [...local];
+  const localIds = new Set(local.map(c => c.id));
+  remote.forEach(rc => {
+    if (!localIds.has(rc.id)) merged.push(rc);
   });
   return merged;
 }
@@ -1169,7 +1199,7 @@ async function hashPin(pin) {
   const buf = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
-function PinLock({ onUnlock, user, onSelectUser }) {
+function PinLock({ onUnlock, user, onSelectUser, onPinSet }) {
   const [mode, setMode] = useState(() => {
     if (!user) return 'select';
     if (!localStorage.getItem(`flo-pin-${user}`)) return 'setup';
@@ -1198,7 +1228,7 @@ function PinLock({ onUnlock, user, onSelectUser }) {
         const next = confirm + n;
         setConfirm(next);
         if (next.length === 4) {
-          if (next === pin) { hashPin(pin).then(h => { localStorage.setItem(`flo-pin-${user}`, h); onUnlock(); }); }
+          if (next === pin) { hashPin(pin).then(h => { localStorage.setItem(`flo-pin-${user}`, h); if (onPinSet) onPinSet(); onUnlock(); }); }
           else { setError("PINs didn't match"); shake(); setPin(''); setConfirm(''); }
         }
       } else {
@@ -3239,7 +3269,12 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
 
   function changePin() {
     USERS.forEach(u => localStorage.removeItem(`flo-pin-${u}`));
-    window.location.reload();
+    // Clear PINs from sheets too so they don't re-sync
+    if (syncUrl) {
+      sheetsPush(syncUrl, stocks, crosses, []).then(() => window.location.reload()).catch(() => window.location.reload());
+    } else {
+      window.location.reload();
+    }
   }
 
   return (
@@ -3260,23 +3295,26 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
 
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Google Sheets Sync</p>
-        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Sync stocks to a Google Sheet via Apps Script. See google-apps-script.js for setup.</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Sync stocks, crosses &amp; PINs to Google Sheets. See google-apps-script.js for setup.</p>
         <Inp value={syncUrl} onChange={e => setSyncUrl(e.target.value)} placeholder="Apps Script web app URL" className="mb-2" />
         {syncUrl && (
           <div className="flex gap-2 mb-2">
             <Btn v="s" onClick={() => {
               setSyncStatus('Pushing...');
-              sheetsPush(syncUrl, stocks).then(r => {
-                setSyncStatus('Pushed ' + r.count + ' stocks');
-                toast.add('Stocks pushed to sheet');
+              const pins = USERS.map(u => { const h = localStorage.getItem(`flo-pin-${u}`); return h ? { user: u, hash: h } : null; }).filter(Boolean);
+              sheetsPush(syncUrl, stocks, crosses, pins).then(r => {
+                setSyncStatus('Pushed ' + (r.stockCount || 0) + ' stocks, ' + (r.crossCount || 0) + ' crosses');
+                toast.add('Data pushed to sheet');
               }).catch(e => { setSyncStatus('Push failed'); toast.add('Push failed: ' + e.message); });
             }} className="flex-1">Push to Sheet</Btn>
             <Btn v="s" onClick={() => {
               setSyncStatus('Pulling...');
               sheetsPull(syncUrl).then(remote => {
-                setStocks(local => mergeStocks(local, remote));
-                setSyncStatus('Pulled ' + remote.length + ' stocks');
-                toast.add('Stocks pulled from sheet');
+                if (remote.stocks) setStocks(local => mergeStocks(local, remote.stocks));
+                if (remote.crosses) setCrosses(local => mergeCrosses(local, remote.crosses));
+                if (remote.pins) remote.pins.forEach(p => { if (p.user && p.hash && !localStorage.getItem(`flo-pin-${p.user}`)) localStorage.setItem(`flo-pin-${p.user}`, p.hash); });
+                setSyncStatus('Pulled ' + (remote.stocks || []).length + ' stocks, ' + (remote.crosses || []).length + ' crosses');
+                toast.add('Data pulled from sheet');
               }).catch(e => { setSyncStatus('Pull failed'); toast.add('Pull failed: ' + e.message); });
             }} className="flex-1">Pull from Sheet</Btn>
           </div>
@@ -3905,16 +3943,22 @@ function App() {
   const [syncStatus, setSyncStatus] = useState('');
   const syncTimer = useRef(null);
 
-  // Auto-push stocks to sheet on changes (debounced)
+  const [pinVersion, setPinVersion] = useState(0);
+
+  // Auto-push stocks, crosses, and PINs to sheet on changes (debounced)
   useEffect(() => {
     if (!syncUrl) return;
     clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => {
-      sheetsPush(syncUrl, stocks).then(() => {
+      const pins = USERS.map(u => {
+        const h = localStorage.getItem(`flo-pin-${u}`);
+        return h ? { user: u, hash: h } : null;
+      }).filter(Boolean);
+      sheetsPush(syncUrl, stocks, crosses, pins).then(() => {
         setSyncStatus('Synced ' + new Date().toLocaleTimeString());
       }).catch(() => setSyncStatus('Push failed'));
     }, 3000);
-  }, [stocks, syncUrl]);
+  }, [stocks, crosses, syncUrl, pinVersion]);
 
   // Pull from sheet on first load
   const hasPulled = useRef(false);
@@ -3923,8 +3967,25 @@ function App() {
     hasPulled.current = true;
     setSyncStatus('Syncing...');
     sheetsPull(syncUrl).then(remote => {
-      if (remote.length > 0) {
-        setStocks(local => mergeStocks(local, remote));
+      if (remote.stocks && remote.stocks.length > 0) {
+        setStocks(local => mergeStocks(local, remote.stocks));
+      }
+      if (remote.crosses && remote.crosses.length > 0) {
+        setCrosses(local => mergeCrosses(local, remote.crosses));
+      }
+      // Sync PINs — store remote hashes locally if missing
+      if (remote.pins && remote.pins.length > 0) {
+        let pinSynced = false;
+        remote.pins.forEach(p => {
+          if (p.user && p.hash && !localStorage.getItem(`flo-pin-${p.user}`)) {
+            localStorage.setItem(`flo-pin-${p.user}`, p.hash);
+            pinSynced = true;
+          }
+        });
+        // If current user's PIN was synced from remote, unlock (switch from setup to auto-unlock)
+        if (pinSynced && localStorage.getItem(`flo-pin-${currentUser}`)) {
+          setLocked(false);
+        }
       }
       setSyncStatus('Synced ' + new Date().toLocaleTimeString());
     }).catch(() => setSyncStatus('Pull failed'));
@@ -4022,8 +4083,8 @@ function App() {
     toast.add(`Transfer request sent to ${t.to}`);
   }
 
-  if (locked) return <PinLock user={currentUser} onSelectUser={setCurrentUser} onUnlock={() => setLocked(false)} />;
-  if (pendingUser) return <PinLock user={pendingUser} onSelectUser={u => setPendingUser(u)} onUnlock={() => { setCurrentUser(pendingUser); setPendingUser(null); }} />;
+  if (locked) return <PinLock user={currentUser} onSelectUser={setCurrentUser} onUnlock={() => setLocked(false)} onPinSet={() => setPinVersion(v => v + 1)} />;
+  if (pendingUser) return <PinLock user={pendingUser} onSelectUser={u => setPendingUser(u)} onUnlock={() => { setCurrentUser(pendingUser); setPendingUser(null); }} onPinSet={() => setPinVersion(v => v + 1)} />;
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>

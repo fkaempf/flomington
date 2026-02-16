@@ -3714,13 +3714,12 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, stocks, toas
 
     const pagesHtml = pages.map((pageItems) => {
       const cells = pageItems.map((s) => {
-        const genShort = s.genotype ? (s.genotype.length > 40 ? s.genotype.slice(0, 37) + '...' : s.genotype) : '';
-        const link = baseUrl + '?stock=' + s.id;
+        const geno = s.genotype || '';
         return `<div class="label">
           <div class="label-qr" id="qr-${s.id}"></div>
           <div class="label-text">
             <div class="label-name">${s.name}</div>
-            ${genShort ? '<div class="label-geno">' + genShort + '</div>' : ''}
+            ${geno ? '<div class="label-geno">' + geno + '</div>' : ''}
           </div>
         </div>`;
       }).join('\n');
@@ -3755,11 +3754,11 @@ body { font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: ex
   padding: 0.8mm 1mm;
   display: flex; flex-direction: row; align-items: center; gap: 1mm;
 }
-.label-qr { flex-shrink: 0; width: 15mm; height: 15mm; }
-.label-qr svg { display: block; width: 15mm; height: 15mm; }
+.label-qr { flex-shrink: 0; width: 10mm; height: 10mm; }
+.label-qr svg { display: block; width: 10mm; height: 10mm; }
 .label-text { flex: 1; min-width: 0; overflow: hidden; }
-.label-name { font-size: 7pt; font-weight: bold; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
-.label-geno { font-size: 5pt; font-family: 'Courier New', monospace; line-height: 1.15; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #444; margin-top: 0.3mm; }
+.label-name { font-size: 6.5pt; font-weight: bold; line-height: 1.15; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.label-geno { font-size: 4.5pt; font-family: 'Courier New', monospace; line-height: 1.15; overflow: hidden; word-break: break-all; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; color: #444; margin-top: 0.3mm; }
 @media print {
   body { margin: 0; }
   .page { break-after: page; }
@@ -3777,7 +3776,7 @@ stocks.forEach(function(s) {
     qr.make();
     el.innerHTML = qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true });
     var svg = el.querySelector('svg');
-    if (svg) { svg.setAttribute('width', '15mm'); svg.setAttribute('height', '15mm'); svg.style.display = 'block'; }
+    if (svg) { svg.setAttribute('width', '10mm'); svg.setAttribute('height', '10mm'); svg.style.display = 'block'; }
   } catch(e) { el.textContent = ''; }
 });
 setTimeout(function(){ window.print(); }, 500);

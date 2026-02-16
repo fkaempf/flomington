@@ -2424,7 +2424,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
         </div>
       )}
 
-      {/* Stock Collections — only show categories with stocks due for flipping (excluding expanded) */}
+      {/* Stock Collections — show categories with stocks due for flipping */}
       {(() => {
         // Individual stocks: expanded + "No Collection" (only show if maintainer matches)
         const myStocks = stocks.filter(s => !s.maintainer || s.maintainer === currentUser);
@@ -2436,9 +2436,9 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
         const dueGroups = [];
         STOCK_CATS.filter(cat => cat !== 'No Collection').forEach(cat => {
           const catStocks = myStocks.filter(s => (s.category || 'No Collection') === cat);
-          const copyNums = [...new Set(catStocks.map(s => s.copies || 1))].sort((a, b) => a - b);
+          const copyNums = [...new Set(catStocks.map(s => Number(s.copies) || 1))].sort((a, b) => a - b);
           copyNums.forEach(cn => {
-            const group = catStocks.filter(s => Number(s.copies || 1) === cn);
+            const group = catStocks.filter(s => (Number(s.copies) || 1) === cn);
             const dueCount = group.filter(s => {
               const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
               return age !== null && age >= getFlipDays(s);

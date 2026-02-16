@@ -3944,26 +3944,13 @@ function App() {
   const syncTimer = useRef(null);
 
   const [pinVersion, setPinVersion] = useState(0);
+  const [initialLoading, setInitialLoading] = useState(!!syncUrl);
+  const initialPushBlocked = useRef(true);
 
-  // Auto-push stocks, crosses, and PINs to sheet on changes (debounced)
-  useEffect(() => {
-    if (!syncUrl) return;
-    clearTimeout(syncTimer.current);
-    syncTimer.current = setTimeout(() => {
-      const pins = USERS.map(u => {
-        const h = localStorage.getItem(`flo-pin-${u}`);
-        return h ? { user: u, hash: h } : null;
-      }).filter(Boolean);
-      sheetsPush(syncUrl, stocks, crosses, pins).then(() => {
-        setSyncStatus('Synced ' + new Date().toLocaleTimeString());
-      }).catch(() => setSyncStatus('Push failed'));
-    }, 3000);
-  }, [stocks, crosses, syncUrl, pinVersion]);
-
-  // Pull from sheet on first load
+  // Pull from sheet FIRST on load — blocks UI until done
   const hasPulled = useRef(false);
   useEffect(() => {
-    if (!syncUrl || hasPulled.current) return;
+    if (!syncUrl || hasPulled.current) { setInitialLoading(false); return; }
     hasPulled.current = true;
     setSyncStatus('Syncing...');
     sheetsPull(syncUrl).then(remote => {
@@ -3982,14 +3969,35 @@ function App() {
             pinSynced = true;
           }
         });
-        // If current user's PIN was synced from remote, unlock (switch from setup to auto-unlock)
         if (pinSynced && localStorage.getItem(`flo-pin-${currentUser}`)) {
           setLocked(false);
         }
       }
       setSyncStatus('Synced ' + new Date().toLocaleTimeString());
-    }).catch(() => setSyncStatus('Pull failed'));
+      // Allow push after initial pull completes (prevent push of stale data)
+      setTimeout(() => { initialPushBlocked.current = false; }, 1000);
+      setInitialLoading(false);
+    }).catch(() => {
+      setSyncStatus('Pull failed');
+      initialPushBlocked.current = false;
+      setInitialLoading(false);
+    });
   }, [syncUrl]);
+
+  // Auto-push stocks, crosses, and PINs to sheet on changes (debounced)
+  useEffect(() => {
+    if (!syncUrl || initialPushBlocked.current) return;
+    clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => {
+      const pins = USERS.map(u => {
+        const h = localStorage.getItem(`flo-pin-${u}`);
+        return h ? { user: u, hash: h } : null;
+      }).filter(Boolean);
+      sheetsPush(syncUrl, stocks, crosses, pins).then(() => {
+        setSyncStatus('Synced ' + new Date().toLocaleTimeString());
+      }).catch(() => setSyncStatus('Push failed'));
+    }, 3000);
+  }, [stocks, crosses, syncUrl, pinVersion]);
 
   const [newCrossOpen, setNewCrossOpen] = useState(false);
   const [virginCrossStock, setVirginCrossStock] = useState(null);
@@ -4082,6 +4090,23 @@ function App() {
     setTransfers(p => [...p, transfer]);
     toast.add(`Transfer request sent to ${t.to}`);
   }
+
+  if (initialLoading) return (
+    <div className="min-h-screen flex flex-col items-center justify-center" style={{ background: 'var(--bg)' }}>
+      <div className="mb-6" style={{ animation: 'pulse 1.5s ease-in-out infinite' }}>
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <ellipse cx="24" cy="28" rx="6" ry="9" fill="#8b5cf6" opacity="0.8"/>
+          <ellipse cx="24" cy="19" rx="4" ry="4" fill="#a78bfa"/>
+          <ellipse cx="15" cy="18" rx="7" ry="4" fill="#8b5cf6" opacity="0.3" transform="rotate(-30 15 18)"/>
+          <ellipse cx="33" cy="18" rx="7" ry="4" fill="#8b5cf6" opacity="0.3" transform="rotate(30 33 18)"/>
+          <circle cx="22" cy="18" r="1.2" fill="#ef4444"/>
+          <circle cx="26" cy="18" r="1.2" fill="#ef4444"/>
+        </svg>
+      </div>
+      <h1 className="text-xl font-bold tracking-tight mb-2" style={{ color: 'var(--text-1)' }}>Flomington</h1>
+      <p className="text-xs" style={{ color: 'var(--text-3)' }}>Syncing...</p>
+    </div>
+  );
 
   if (locked) return <PinLock user={currentUser} onSelectUser={setCurrentUser} onUnlock={() => setLocked(false)} onPinSet={() => setPinVersion(v => v + 1)} />;
   if (pendingUser) return <PinLock user={pendingUser} onSelectUser={u => setPendingUser(u)} onUnlock={() => { setCurrentUser(pendingUser); setPendingUser(null); }} onPinSet={() => setPinVersion(v => v + 1)} />;

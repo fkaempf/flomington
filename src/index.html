@@ -2554,7 +2554,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
 }
 
 /* ========== STOCKS SCREEN ========== */
-function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, onOpenPrint, onBulkActive }) {
+function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, printListCrosses, onOpenPrint, onBulkActive }) {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState(() => initialStockId ? 'all' : 'all');
   const [showAll, setShowAll] = useState(() => !!initialStockId);
@@ -2746,13 +2746,14 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </select>}
         <div className="flex-1" />
         {/* Print */}
-        <button onClick={onOpenPrint} title={`Print labels${printList.length > 0 ? ` (${printList.length})` : ''}`}
+        {(() => { const totalPrint = printList.length + (printListCrosses || []).length; return (
+        <button onClick={onOpenPrint} title={`Print labels${totalPrint > 0 ? ` (${totalPrint})` : ''}`}
           className="relative flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
-          style={{ background: printList.length > 0 ? 'rgba(0,128,128,0.12)' : 'var(--surface-2)', color: printList.length > 0 ? '#5eead4' : 'var(--text-3)', border: printList.length > 0 ? '1px solid rgba(0,128,128,0.2)' : '1px solid var(--border)' }}>
+          style={{ background: totalPrint > 0 ? 'rgba(0,128,128,0.12)' : 'var(--surface-2)', color: totalPrint > 0 ? '#5eead4' : 'var(--text-3)', border: totalPrint > 0 ? '1px solid rgba(0,128,128,0.2)' : '1px solid var(--border)' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-          {printList.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center" style={{ background: '#5eead4', color: '#09090b' }}>{printList.length}</span>}
-        </button>
+          {totalPrint > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center" style={{ background: '#5eead4', color: '#09090b' }}>{totalPrint}</span>}
+        </button>); })()}
         {/* Select */}
         <button onClick={() => { setSelectMode(m => { const next = !m; onBulkActive?.(next); return next; }); }} title="Multi-select"
           className="flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
@@ -2774,7 +2775,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </button>
         <button onClick={() => { setMassAdding(true); setMassAddText(''); setMassAddCat(catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter); setMassAddLoc('25inc'); }} title="Mass add stocks"
           className="flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
-          style={{ background: 'rgba(0,128,128,0.12)', color: '#5eead4', border: '1px solid rgba(0,128,128,0.2)' }}>
+          style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
             <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
@@ -4486,8 +4487,8 @@ function App() {
   }, []);
   const STOCK_CATS = collections;
   const [notifyVirgins, setNotifyVirgins] = useLS('flo-notify-virgins', false);
-  const [printList, setPrintList] = useLS('flo-print-list', []);
-  const [printListCrosses, setPrintListCrosses] = useLS('flo-print-crosses', []);
+  const [printList, setPrintList] = useState([]);
+  const [printListCrosses, setPrintListCrosses] = useState([]);
   const [printOpen, setPrintOpen] = useState(false);
   const [bulkBarActive, setBulkBarActive] = useState(false);
   const SHEETS_SYNC_URL = 'https://script.google.com/macros/s/AKfycbxuR_-oBOJlg4bwL-A0S1wIF2irDL0zky57REwP_kLEHBnhy8fgUm_MpSk4ct22kHCdKw/exec';
@@ -4695,7 +4696,7 @@ function App() {
           }} STOCK_CATS={STOCK_CATS} sentTransfers={sentResolved} onDismissTransfer={(t) => {
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} />}
-          {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} />}
+          {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
           {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} syncUrl={syncUrl} setSyncUrl={setSyncUrl} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
         </div>

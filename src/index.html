@@ -75,6 +75,9 @@ input, textarea, select {
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 select.compact { font-size: 11px !important; color: inherit !important; background: inherit !important; }
+input.compact { font-size: 11px !important; color: inherit !important; background: transparent !important; border: none !important; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }
 input:focus, textarea:focus, select:focus {
   border-color: var(--accent) !important;
   outline: none;
@@ -2880,7 +2883,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                             <div className="flex items-center gap-2 flex-wrap mb-0.5">
                               <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
                               <TagBadges tags={tags} limit={isTouchDevice() ? 2 : undefined} />
-                              {s.maintainer && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{s.maintainer}</span>}
+
                               {((s.copies || 1) > 1 || filtered.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'))) && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>#{s.copies || 1}</span>}
                             </div>
                             {s.genotype && s.genotype !== '+' && <p className="text-xs mono truncate" style={{ color: 'rgba(167,139,250,0.35)' }}>{s.genotype}</p>}
@@ -4318,8 +4321,8 @@ setTimeout(function(){ window.print(); }, 500);
               <option key={k} value={k}>{k} ({v.labelW}x{v.labelH}mm)</option>
             ))}
           </select>
-          <div onClick={() => setShowQR(!showQR)} className="compact px-2 py-1.5 font-semibold rounded-lg cursor-pointer select-none"
-            style={{ fontSize: '11px', color: showQR ? '#5eead4' : 'var(--text-3)', border: showQR ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showQR ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
+          <div onClick={() => setShowQR(!showQR)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', color: showQR ? '#5eead4' : 'var(--text-3)', border: showQR ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showQR ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
             {showQR ? '✓ QR' : 'QR'}
           </div>
           <select value={showGrid ? 'grid' : 'no'} onChange={e => setShowGrid(e.target.value === 'grid')}
@@ -4328,11 +4331,11 @@ setTimeout(function(){ window.print(); }, 500);
             <option value="grid">Grid</option>
             <option value="no">No grid</option>
           </select>
-          <div className="compact flex items-center gap-1 px-2 py-1.5 font-semibold rounded-lg"
-            style={{ fontSize: '11px', border: skipLabels > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: skipLabels > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)' }}>
+          <div className="compact flex items-center gap-1 font-semibold rounded-lg"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', border: skipLabels > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: skipLabels > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)' }}>
             <span>Skip</span>
             <input type="number" min="0" max={spec.cols * spec.rows - 1} value={skipLabels} onChange={e => setSkipLabels(Math.max(0, parseInt(e.target.value) || 0))}
-              className="w-8 text-center bg-transparent outline-none font-semibold" style={{ fontSize: '11px', color: 'inherit' }} />
+              className="compact" style={{ width: '20px', textAlign: 'center', outline: 'none', fontWeight: 600, padding: 0, margin: 0, lineHeight: '1' }} />
           </div>
         </div>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Feed label paper with arrow pointing right →</p>

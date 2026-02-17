@@ -569,13 +569,21 @@ function stockTags(s) {
   const g = (s.genotype || '').toLowerCase();
   const n = (s.notes || '').toLowerCase();
   const all = g + ' ' + n;
-  if (all.includes('p65.ad') || all.includes('-p65.ad}') || n.includes(' ad ') || n.includes(' ad(') || /\bAD\b/.test(s.notes || '')) tags.push('AD');
-  if (all.includes('gal4.dbd') || all.includes('-gal4.dbd}') || n.includes(' dbd ') || n.includes(' dbd(') || /\bDBD\b/.test(s.notes || '')) tags.push('DBD');
-  if (/lexa/i.test(g) || /\blexa\b/i.test(n)) tags.push('LexA');
-  if (/gal4/i.test(g) && !tags.includes('AD') && !tags.includes('DBD')) tags.push('GAL4');
   if (OPTO.some(k => all.includes(k))) tags.push('Opto');
   if (CALC.some(k => all.includes(k)) || all.includes('gfp')) tags.push('Imaging');
+  const hasAD = all.includes('p65.ad') || all.includes('-p65.ad}') || n.includes(' ad ') || n.includes(' ad(') || /\bAD\b/.test(s.notes || '');
+  const hasDBD = all.includes('gal4.dbd') || all.includes('-gal4.dbd}') || n.includes(' dbd ') || n.includes(' dbd(') || /\bDBD\b/.test(s.notes || '');
+  if (hasAD && hasDBD) { tags.push('Split-GAL4'); }
+  else { if (hasAD) tags.push('AD'); if (hasDBD) tags.push('DBD'); }
+  if (/lexa/i.test(g) || /\blexa\b/i.test(n)) tags.push('LexA');
+  if (/gal4/i.test(g) && !hasAD && !hasDBD) tags.push('GAL4');
   return tags;
+}
+const TAG_STYLE = { Opto: { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }, Imaging: { background: 'rgba(34,197,94,0.1)', color: '#86efac' }, AD: { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' }, DBD: { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' }, 'Split-GAL4': { background: 'rgba(139,92,246,0.1)', color: '#a78bfa' } };
+function TagBadges({ tags, limit }) {
+  const show = limit ? tags.slice(0, limit) : tags;
+  const more = limit && tags.length > limit ? tags.length - limit : 0;
+  return <>{show.map(t => <span key={t} className="badge" style={TAG_STYLE[t] || { background: 'rgba(253,224,71,0.1)', color: '#fde047' }}>{t}</span>)}{more > 0 && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-3)' }}>+{more}</span>}</>;
 }
 function crossDetect(c, stocks) {
   const a = detect(stocks.find(s => s.id === c.parentA)?.genotype);
@@ -2117,7 +2125,7 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
                     <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{tempLabel(s.location)}</span>
-                    {tags.map(t => <span key={t} className="badge" style={t === 'Opto' ? { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' } : t === 'Imaging' ? { background: 'rgba(34,197,94,0.1)', color: '#86efac' } : t === 'AD' ? { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' } : t === 'DBD' ? { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' } : { background: 'rgba(253,224,71,0.1)', color: '#fde047' }}>{t}</span>)}
+                    <TagBadges tags={tags} limit={isTouchDevice() ? 2 : undefined} />
                   </div>
                   {s.genotype && s.genotype !== '+' && <p className="text-xs mono truncate mt-1" style={{ color: 'rgba(167,139,250,0.4)' }}>{s.genotype}</p>}
                 </div>
@@ -2870,7 +2878,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                             <div className="flex items-center gap-2 flex-wrap mb-0.5">
                               <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
                               <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{(s.variant || 'stock') === 'expanded' ? '21d' : tempLabel(s.location)}</span>
-                              {tags.map(t => <span key={t} className="badge" style={t === 'Opto' ? { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' } : t === 'Imaging' ? { background: 'rgba(34,197,94,0.1)', color: '#86efac' } : t === 'AD' ? { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' } : t === 'DBD' ? { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' } : { background: 'rgba(253,224,71,0.1)', color: '#fde047' }}>{t}</span>)}
+                              <TagBadges tags={tags} limit={isTouchDevice() ? 2 : undefined} />
                               {s.maintainer && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{s.maintainer}</span>}
                               {((s.copies || 1) > 1 || filtered.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'))) && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>#{s.copies || 1}</span>}
                             </div>

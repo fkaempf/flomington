@@ -4197,16 +4197,16 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     const w = window.open('', '_blank');
     if (!w) { toast.add('Pop-up blocked — allow pop-ups for this site'); return; }
 
-    const baseUrl = window.location.origin + window.location.pathname;
+    const qrBase = (window.location.origin + window.location.pathname).replace('https://', '');
 
     // Build unified label data
     const allLabels = [];
     stockItems.forEach(s => {
-      allLabels.push({ id: 's-' + s.id, name: s.name, line2: s.genotype || '', line3: '', qrUrl: baseUrl + '?stock=' + s.id.slice(0, 8) });
+      allLabels.push({ id: 's-' + s.id, name: s.name, line2: s.genotype || '', line3: '', qrUrl: qrBase + '?s=' + s.id.slice(0, 8) });
     });
     crossItems.forEach(c => {
       const info = crossLabelText(c, stocks);
-      allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: baseUrl + '?cross=' + c.id.slice(0, 8), isCross: true });
+      allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: qrBase + '?c=' + c.id.slice(0, 8), isCross: true });
     });
 
     const perPage = spec.cols * spec.rows;
@@ -4237,7 +4237,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
 
     // Scale sizes based on label dimensions
     const isLarge = spec.labelH > 30;
-    const qrSize = isLarge ? 20 : 10;
+    const qrSize = isLarge ? 16 : 8;
     const pad = isLarge ? '2mm 3mm' : '0.8mm 1mm';
     const gap = isLarge ? '2mm' : '1mm';
     const nameSize = isLarge ? '9pt' : '6.5pt';
@@ -4597,10 +4597,10 @@ function App() {
   const [virginCrossStock, setVirginCrossStock] = useState(null);
   const toast = useToast();
 
-  // Deep link: ?stock=<id> opens that stock (supports short ID prefixes from QR codes)
+  // Deep link: ?stock=<id> or ?s=<id> opens that stock (supports short ID prefixes from QR codes)
   const [deepLinkStock, setDeepLinkStock] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    const stockId = params.get('stock');
+    const stockId = params.get('stock') || params.get('s');
     if (stockId) {
       history.replaceState(null, '', window.location.pathname);
       return stockId;
@@ -4609,7 +4609,7 @@ function App() {
   });
   const [deepLinkCross, setDeepLinkCross] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    const crossId = params.get('cross');
+    const crossId = params.get('cross') || params.get('c');
     if (crossId) {
       history.replaceState(null, '', window.location.pathname);
       return crossId;

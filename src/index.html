@@ -2581,6 +2581,10 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [addingCat, setAddingCat] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [collectionDetail, setCollectionDetail] = useState(null);
+  const [massAdding, setMassAdding] = useState(false);
+  const [massAddText, setMassAddText] = useState('');
+  const [massAddCat, setMassAddCat] = useState('No Collection');
+  const [massAddLoc, setMassAddLoc] = useState('25inc');
   const [sortBy, setSortBy] = useLS('flo-sort', 'nextFlip');
   const [copyFilter, setCopyFilter] = useState('all');
 
@@ -2768,6 +2772,14 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
         </button>
+        <button onClick={() => { setMassAdding(true); setMassAddText(''); setMassAddCat(catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter); setMassAddLoc('25inc'); }} title="Mass add stocks"
+          className="flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
+          style={{ background: 'rgba(0,128,128,0.12)', color: '#5eead4', border: '1px solid rgba(0,128,128,0.2)' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+            <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+          </svg>
+        </button>
       </div>
 
       {/* Collection filter chips */}
@@ -2900,6 +2912,67 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
 
       <StockModal stock={editing} onClose={() => setEditing(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={id => { setEditing(null); setDeleting(id); }} STOCK_CATS={STOCK_CATS} setCollections={setCollections} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} printList={printList} setPrintList={setPrintList} />
       <Confirm open={!!deleting} onOk={doDelete} onNo={() => setDeleting(null)} title="Delete stock?" msg="This stock will be permanently removed." />
+
+      {/* Mass add stocks modal */}
+      <Modal open={massAdding} onClose={() => setMassAdding(false)} title="Mass Add Stocks">
+        {(() => {
+          const lines = massAddText.split('\n').map(l => l.trim()).filter(Boolean);
+          const count = lines.length;
+          return (
+            <div>
+              <Field label="Stock names (one per line)">
+                <Txt value={massAddText} onChange={e => setMassAddText(e.target.value)} rows={6} placeholder={"BL79039\nOregon-R\nVDRC 110620\nw1118"} autoFocus={!isTouchDevice()} />
+              </Field>
+              <Field label="Collection">
+                <select value={massAddCat} onChange={e => {
+                  if (e.target.value === '__new__') {
+                    const name = prompt('New collection name:');
+                    if (name && name.trim() && !STOCK_CATS.includes(name.trim())) {
+                      const n = name.trim();
+                      const idx = STOCK_CATS.indexOf('No Collection');
+                      const next = [...STOCK_CATS];
+                      if (idx >= 0) next.splice(idx, 0, n); else next.push(n);
+                      setCollections(next);
+                      setMassAddCat(n);
+                    }
+                  } else { setMassAddCat(e.target.value); }
+                }} className="w-full px-4 py-3 text-sm rounded-xl" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>
+                  {STOCK_CATS.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                  <option value="__new__">+ New Collection</option>
+                </select>
+              </Field>
+              <Field label="Location">
+                <div className="grid grid-cols-2 gap-2">
+                  {TEMPS.map(t => (
+                    <div key={t} onClick={() => setMassAddLoc(t)} className={`loc-card ${massAddLoc === t ? 'selected' : ''}`}>
+                      <div className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>{tempFull(t)}</div>
+                    </div>
+                  ))}
+                </div>
+              </Field>
+              {count > 0 && (
+                <p className="text-xs mb-3" style={{ color: 'var(--accent-2)' }}>{count} stock{count !== 1 ? 's' : ''} will be added</p>
+              )}
+              <Btn onClick={() => {
+                if (count === 0) return;
+                const newStocks = lines.map(name => {
+                  const s = { id: uid(), name, genotype: '', category: massAddCat, location: massAddLoc, notes: '', variant: 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser, copies: 1 };
+                  const g = guessSource(name);
+                  if (g) {
+                    s.source = g.source;
+                    s.sourceId = g.sourceId;
+                    if (g.source === 'Bloomington' && g.sourceId) s.flybaseId = `FBst${g.sourceId.replace(/\D/g, '').padStart(7, '0')}`;
+                  }
+                  return s;
+                });
+                setStocks(p => [...p, ...newStocks]);
+                toast.add(`Added ${count} stock${count !== 1 ? 's' : ''}`);
+                setMassAdding(false);
+              }} className="w-full" disabled={count === 0}>Add {count || ''} Stock{count !== 1 ? 's' : ''}</Btn>
+            </div>
+          );
+        })()}
+      </Modal>
 
       {/* Access denied for deep link */}
       <Modal open={!!accessDenied} onClose={() => setAccessDenied(null)} title="Access Denied">

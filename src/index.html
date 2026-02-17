@@ -1766,8 +1766,8 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
 
         {/* Dates — hide range for current collecting phase */}
         {(() => {
-          const showVirgin = !['collecting virgins', 'collecting progeny', 'ripening', 'screening', 'done'].includes(cross.status);
-          const showProgeny = !['collecting progeny', 'ripening', 'screening', 'done'].includes(cross.status);
+          const showVirgin = cross.status === 'waiting for virgins';
+          const showProgeny = cross.status === 'waiting for progeny';
           if (!showVirgin && !showProgeny) return null;
           return (
             <div className={`grid gap-3 mt-3 mb-5 ${showVirgin && showProgeny ? 'grid-cols-2' : 'grid-cols-1'}`}>

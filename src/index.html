@@ -4330,11 +4330,13 @@ setTimeout(function(){ window.print(); }, 500);
             <option value="grid">Grid</option>
             <option value="no">No grid</option>
           </select>
-          <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-            <span className="text-xs font-semibold" style={{ color: 'var(--text-3)' }}>Skip</span>
-            <input type="number" min="0" max={spec.cols * spec.rows - 1} value={skipLabels} onChange={e => setSkipLabels(Math.max(0, parseInt(e.target.value) || 0))}
-              className="w-10 text-xs text-center rounded px-1 py-0.5" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
-          </div>
+          <select value={skipLabels} onChange={e => setSkipLabels(Math.max(0, parseInt(e.target.value) || 0))}
+            className="compact px-2 py-1.5 font-semibold rounded-lg"
+            style={{ color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)', border: skipLabels > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: skipLabels > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', appearance: 'auto' }}>
+            {Array.from({ length: spec.cols * spec.rows }, (_, i) => (
+              <option key={i} value={i}>{i === 0 ? 'Skip 0' : `Skip ${i}`}</option>
+            ))}
+          </select>
         </div>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Feed label paper with arrow pointing right →</p>
 

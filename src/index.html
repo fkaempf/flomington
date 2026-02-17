@@ -406,7 +406,7 @@ const dFromNow = d => { if (!d) return 0; const ms = toDate(d) - toDate(today())
 const isTouchDevice = () => window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
 
 /* ========== SHEETS SYNC ========== */
-const SYNC_FIELDS = ['id', 'name', 'genotype', 'variant', 'category', 'location', 'source', 'sourceId', 'flybaseId', 'maintainer', 'notes', 'isGift', 'giftFrom', 'createdAt', 'lastFlipped', 'copies'];
+const SYNC_FIELDS = ['id', 'name', 'genotype', 'variant', 'category', 'location', 'source', 'sourceId', 'flybaseId', 'janeliaLine', 'maintainer', 'notes', 'isGift', 'giftFrom', 'createdAt', 'lastFlipped', 'copies'];
 const CROSS_SYNC_FIELDS = ['id', 'parentA', 'parentB', 'temperature', 'setupDate', 'status', 'owner', 'notes', 'targetCount', 'collected', 'vials', 'virginsCollected', 'manualFlipDate', 'manualEcloseDate', 'manualVirginDate', 'crossType', 'parentCrossId', 'experimentType', 'experimentDate', 'retinalStartDate', 'waitStartDate', 'ripeningStartDate'];
 
 async function sheetsPull(url) {
@@ -502,6 +502,28 @@ function stockUrl(source, stockId) {
   if (source === 'VDRC') return `https://stockcenter.vdrc.at/control/product/~VIEW_INDEX=0/~VIEW_SIZE=100/~product_id=${id}`;
   if (source === 'Kyoto') return `https://kyotofly.kit.jp/cgi-bin/stocks/search_res_det.cgi?DB_NUM=1&DG_NUM=${id}`;
   return null;
+}
+function parseJaneliaLine(text) {
+  if (!text) return null;
+  const m = text.match(/\b(SS|MB|JRC_SS|JRC_MB)\s*(\d{4,6})\b/i);
+  if (m) return m[1].replace('JRC_', '').toUpperCase() + m[2];
+  return null;
+}
+function janeliaUrl(lineId) {
+  if (!lineId) return null;
+  return `https://splitgal4.janelia.org/cgi-bin/view_splitgal4_imagery.cgi?line=${lineId}`;
+}
+async function fetchBDSCInfo(stockNum) {
+  const id = String(stockNum).replace(/\D/g, '');
+  if (!id) return null;
+  try {
+    const resp = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(`https://bdsc.indiana.edu/stocks/${id}`)}`);
+    if (!resp.ok) return null;
+    const html = await resp.text();
+    const janelia = parseJaneliaLine(html);
+    const genoMatch = html.match(/Genotype[^<]*<[^>]*>([^<]+)/i);
+    return { janeliaLine: janelia, genotype: genoMatch ? genoMatch[1].trim() : null };
+  } catch { return null; }
 }
 function parseFlyBase(input) {
   if (!input) return null;
@@ -3213,11 +3235,28 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
               </select>
             </Field>
             <Field label="Stock #">
-              <Inp value={f.sourceId || ''} onChange={e => { const v = e.target.value; const upd = { ...f, sourceId: v }; if (f.source === 'Bloomington' && v.replace(/\D/g, '') && !f.flybaseId) upd.flybaseId = `FBst${v.replace(/\D/g, '').padStart(7, '0')}`; setF(upd); }} placeholder="79039" />
+              <Inp value={f.sourceId || ''} onChange={e => {
+                const v = e.target.value;
+                const upd = { ...f, sourceId: v };
+                const numId = v.replace(/\D/g, '');
+                if (f.source === 'Bloomington' && numId) {
+                  if (!f.flybaseId) upd.flybaseId = `FBst${numId.padStart(7, '0')}`;
+                  if (numId.length >= 4) fetchBDSCInfo(numId).then(info => {
+                    if (!info) return;
+                    setF(prev => {
+                      const next = { ...prev };
+                      if (info.janeliaLine) next.janeliaLine = info.janeliaLine;
+                      if (info.genotype && !prev.genotype) next.genotype = info.genotype;
+                      return next;
+                    });
+                  });
+                }
+                setF(upd);
+              }} placeholder="79039" />
             </Field>
           </div>
           {f.source && f.sourceId && stockUrl(f.source, f.sourceId) && (
-            <div className="flex gap-3 mb-3">
+            <div className="flex flex-wrap gap-3 mb-3">
               <a href={stockUrl(f.source, f.sourceId)} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: 'var(--accent-2)' }}>
                 View on {f.source} ↗
               </a>
@@ -3226,6 +3265,18 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
                   View on FlyBase ↗
                 </a>
               )}
+              {(f.janeliaLine || parseJaneliaLine(f.notes)) && (
+                <a href={janeliaUrl(f.janeliaLine || parseJaneliaLine(f.notes))} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: '#22c55e' }}>
+                  FlyLight ({f.janeliaLine || parseJaneliaLine(f.notes)}) ↗
+                </a>
+              )}
+            </div>
+          )}
+          {!(f.source && f.sourceId && stockUrl(f.source, f.sourceId)) && (f.janeliaLine || parseJaneliaLine(f.notes)) && (
+            <div className="flex gap-3 mb-3">
+              <a href={janeliaUrl(f.janeliaLine || parseJaneliaLine(f.notes))} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: '#22c55e' }}>
+                FlyLight ({f.janeliaLine || parseJaneliaLine(f.notes)}) ↗
+              </a>
             </div>
           )}
           {f.source && !stockUrl(f.source, f.sourceId) && f.source !== 'Other' && (
@@ -4403,6 +4454,24 @@ function App() {
       // Allow push after initial pull completes (prevent push of stale data)
       setTimeout(() => { initialPushBlocked.current = false; }, 1000);
       setInitialLoading(false);
+      // Backfill Janelia lines for existing Bloomington stocks
+      const toCheck = (remote.stocks || []).filter(s => s.source === 'Bloomington' && s.sourceId && !s.janeliaLine);
+      if (toCheck.length > 0) {
+        (async () => {
+          let updated = false;
+          for (const s of toCheck) {
+            const info = await fetchBDSCInfo(s.sourceId);
+            if (info?.janeliaLine) {
+              s.janeliaLine = info.janeliaLine;
+              updated = true;
+            }
+          }
+          if (updated) setStocks(prev => prev.map(s => {
+            const match = toCheck.find(t => t.id === s.id && t.janeliaLine);
+            return match ? { ...s, janeliaLine: match.janeliaLine } : s;
+          }));
+        })();
+      }
     }).catch(() => {
       setSyncStatus('Pull failed');
       initialPushBlocked.current = false;

@@ -2462,7 +2462,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
           <p className="section-header">Active Crosses</p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {activeCrosses.map(c => (
-              <CrossCard key={c.id} cross={c} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} forceOpen={selectedCrossId === c.id} currentUser={currentUser} onTransfer={onTransfer} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} />
+              <CrossCard key={c.id} cross={c} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} forceOpen={selectedCrossId && (selectedCrossId === c.id || c.id.startsWith(selectedCrossId))} currentUser={currentUser} onTransfer={onTransfer} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} />
             ))}
           </div>
         </div>
@@ -2583,7 +2583,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [accessDenied, setAccessDenied] = useState(null);
   const [editing, setEditing] = useState(() => {
     if (initialStockId) {
-      const s = stocks.find(x => x.id === initialStockId);
+      const s = stocks.find(x => x.id === initialStockId || x.id.startsWith(initialStockId));
       if (s && s.maintainer && s.maintainer !== currentUser) return null;
       return s ? { ...s } : null;
     }
@@ -2591,7 +2591,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   });
   useEffect(() => {
     if (initialStockId) {
-      const s = stocks.find(x => x.id === initialStockId);
+      const s = stocks.find(x => x.id === initialStockId || x.id.startsWith(initialStockId));
       if (s && s.maintainer && s.maintainer !== currentUser) {
         setAccessDenied(s.name);
       }
@@ -4201,11 +4201,11 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     // Build unified label data
     const allLabels = [];
     stockItems.forEach(s => {
-      allLabels.push({ id: 's-' + s.id, name: s.name, line2: s.genotype || '', line3: '', qrUrl: baseUrl + '?stock=' + s.id });
+      allLabels.push({ id: 's-' + s.id, name: s.name, line2: s.genotype || '', line3: '', qrUrl: baseUrl + '?stock=' + s.id.slice(0, 8) });
     });
     crossItems.forEach(c => {
       const info = crossLabelText(c, stocks);
-      allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: baseUrl + '?cross=' + c.id, isCross: true });
+      allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: baseUrl + '?cross=' + c.id.slice(0, 8), isCross: true });
     });
 
     const perPage = spec.cols * spec.rows;
@@ -4286,7 +4286,7 @@ items.forEach(function(s) {
   var el = document.getElementById('qr-' + s.id);
   if (!el) return;
   try {
-    var qr = qrcode(0, 'L');
+    var qr = qrcode(0, 'H');
     qr.addData(s.url);
     qr.make();
     el.innerHTML = qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true });
@@ -4585,7 +4585,7 @@ function App() {
   const [virginCrossStock, setVirginCrossStock] = useState(null);
   const toast = useToast();
 
-  // Deep link: ?stock=<id> opens that stock
+  // Deep link: ?stock=<id> opens that stock (supports short ID prefixes from QR codes)
   const [deepLinkStock, setDeepLinkStock] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const stockId = params.get('stock');
@@ -4612,7 +4612,7 @@ function App() {
   }, [deepLinkStock]);
   useEffect(() => {
     if (deepLinkCross && crosses.length > 0) {
-      const c = crosses.find(x => x.id === deepLinkCross);
+      const c = crosses.find(x => x.id === deepLinkCross || x.id.startsWith(deepLinkCross));
       if (c && c.owner && c.owner !== currentUser) {
         setCrossAccessDenied(cl(c, stocks));
       } else if (c) {

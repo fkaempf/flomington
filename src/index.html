@@ -2602,7 +2602,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     if (copyFilter !== 'all') result = result.filter(s => Number(s.copies || 1) === Number(copyFilter));
     if (search) {
       const q = search.toLowerCase();
-      result = result.filter(s => [s.name, s.genotype || '', s.notes || ''].some(x => x.toLowerCase().includes(q)));
+      result = result.filter(s => [s.name, s.genotype || '', s.notes || '', s.sourceId || '', s.flybaseId || '', s.janeliaLine || '', s.source || '', s.giftFrom || '', s.category || ''].some(x => x.toLowerCase().includes(q)));
     }
     result = [...result].sort((a, b) => {
       if (sortBy === 'alpha') return (a.name || '').localeCompare(b.name || '');

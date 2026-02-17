@@ -4308,29 +4308,32 @@ setTimeout(function(){ window.print(); }, 500);
   return (
     <Modal open={open} onClose={onClose} title="Print Labels" wide>
       <div className="mb-4">
-        <p className="text-xs mb-2" style={{ color: 'var(--text-3)' }}>{totalCount} label{totalCount !== 1 ? 's' : ''} queued</p>
-        <div className="flex items-center gap-2 mb-3">
-          {Object.entries(LABEL_FORMATS).map(([k, v]) => (
-            <div key={k} onClick={() => setFormat(k)} className="loc-card flex-1 text-center px-2 py-1.5 cursor-pointer" style={format === k ? { borderColor: 'var(--accent)', background: 'rgba(139,92,246,0.08)' } : {}}>
-              <p className="text-xs font-semibold" style={{ color: 'var(--text-1)' }}>{k}</p>
-              <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>{v.labelW}x{v.labelH}mm</p>
-            </div>
-          ))}
-        </div>
         <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <div onClick={() => setShowGrid(!showGrid)} className="loc-card flex items-center gap-2 px-3 py-1.5 cursor-pointer" style={showGrid ? { borderColor: 'rgba(0,128,128,0.3)', background: 'rgba(0,128,128,0.08)' } : {}}>
-            <span className="text-xs">{showGrid ? '✓' : ''}</span>
-            <span className="text-xs font-semibold" style={{ color: 'var(--text-1)' }}>Grid</span>
-          </div>
-          <div onClick={() => setShowQR(!showQR)} className="loc-card flex items-center gap-2 px-3 py-1.5 cursor-pointer" style={showQR ? { borderColor: 'rgba(0,128,128,0.3)', background: 'rgba(0,128,128,0.08)' } : {}}>
-            <span className="text-xs">{showQR ? '✓' : ''}</span>
-            <span className="text-xs font-semibold" style={{ color: 'var(--text-1)' }}>QR code</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-            <span className="text-xs font-semibold" style={{ color: 'var(--text-1)' }}>Skip</span>
+          <p className="text-xs" style={{ color: 'var(--text-3)' }}>{totalCount} label{totalCount !== 1 ? 's' : ''}</p>
+          <div className="flex-1" />
+          <select value={format} onChange={e => setFormat(e.target.value)}
+            className="compact px-2 py-1.5 font-semibold rounded-lg"
+            style={{ color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)', appearance: 'auto' }}>
+            {Object.entries(LABEL_FORMATS).map(([k, v]) => (
+              <option key={k} value={k}>{k} ({v.labelW}x{v.labelH}mm)</option>
+            ))}
+          </select>
+          <select value={showQR ? 'qr' : 'no'} onChange={e => setShowQR(e.target.value === 'qr')}
+            className="compact px-2 py-1.5 font-semibold rounded-lg"
+            style={{ color: showQR ? '#5eead4' : 'var(--text-3)', border: showQR ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showQR ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)', appearance: 'auto' }}>
+            <option value="qr">QR on</option>
+            <option value="no">QR off</option>
+          </select>
+          <select value={showGrid ? 'grid' : 'no'} onChange={e => setShowGrid(e.target.value === 'grid')}
+            className="compact px-2 py-1.5 font-semibold rounded-lg"
+            style={{ color: showGrid ? '#5eead4' : 'var(--text-3)', border: showGrid ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showGrid ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)', appearance: 'auto' }}>
+            <option value="grid">Grid</option>
+            <option value="no">No grid</option>
+          </select>
+          <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+            <span className="text-xs font-semibold" style={{ color: 'var(--text-3)' }}>Skip</span>
             <input type="number" min="0" max={spec.cols * spec.rows - 1} value={skipLabels} onChange={e => setSkipLabels(Math.max(0, parseInt(e.target.value) || 0))}
-              className="w-12 text-xs text-center rounded-lg px-1 py-0.5" style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
-            <span className="text-xs" style={{ color: 'var(--text-3)' }}>used</span>
+              className="w-10 text-xs text-center rounded px-1 py-0.5" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
           </div>
         </div>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Feed label paper with arrow pointing right →</p>

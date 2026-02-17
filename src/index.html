@@ -564,6 +564,19 @@ const stIdx = s => STATUSES.indexOf(s);
 const OPTO = ['cschrimson', 'chrimson', 'chr2', 'reachr', 'chrmine', 'chronos', 'cochr', 'gtacr'];
 const CALC = ['gcamp', 'jgcamp', 'rgeco', 'rcamp'];
 function detect(g, name) { const l = (g || '').toLowerCase(); const n = (name || '').toLowerCase(); return { o: OPTO.some(k => l.includes(k)), c: CALC.some(k => l.includes(k)) || n.includes('gfp') || l.includes('gfp') }; }
+function stockTags(s) {
+  const tags = [];
+  const g = (s.genotype || '').toLowerCase();
+  const n = (s.notes || '').toLowerCase();
+  const all = g + ' ' + n;
+  if (all.includes('p65.ad') || all.includes('-p65.ad}') || n.includes(' ad ') || n.includes(' ad(') || /\bAD\b/.test(s.notes || '')) tags.push('AD');
+  if (all.includes('gal4.dbd') || all.includes('-gal4.dbd}') || n.includes(' dbd ') || n.includes(' dbd(') || /\bDBD\b/.test(s.notes || '')) tags.push('DBD');
+  if (/lexa/i.test(g) || /\blexa\b/i.test(n)) tags.push('LexA');
+  if (/gal4/i.test(g) && !tags.includes('AD') && !tags.includes('DBD')) tags.push('GAL4');
+  if (OPTO.some(k => all.includes(k))) tags.push('Opto');
+  if (CALC.some(k => all.includes(k)) || all.includes('gfp')) tags.push('Imaging');
+  return tags;
+}
 function crossDetect(c, stocks) {
   const a = detect(stocks.find(s => s.id === c.parentA)?.genotype);
   const b = detect(stocks.find(s => s.id === c.parentB)?.genotype);
@@ -2059,7 +2072,7 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
   if (!open) return null;
 
   const filteredStocks = stocks.filter(s =>
-    !search || [s.name, s.genotype, s.notes || ''].some(x => x.toLowerCase().includes(search.toLowerCase()))
+    !search || [s.name, s.genotype, s.notes || '', s.sourceId || '', s.flybaseId || '', ...stockTags(s)].some(x => x.toLowerCase().includes(search.toLowerCase()))
   );
 
   function finish() {
@@ -2098,14 +2111,13 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
         ) : (
           <div className="grid gap-1 max-h-[50vh] overflow-y-auto">
             {filteredStocks.filter(s => !exclude || s.id !== exclude).map(s => {
-              const dc = detect(s.genotype, s.name);
+              const tags = stockTags(s);
               return (
                 <div key={s.id} onClick={() => { onPick(s); setSearch(''); }} className="stock-pick card-inner">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
                     <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{tempLabel(s.location)}</span>
-                    {dc.o && <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }}>opto</span>}
-                    {dc.c && <span className="badge" style={{ background: 'rgba(34,197,94,0.1)', color: '#86efac' }}>imaging</span>}
+                    {tags.map(t => <span key={t} className="badge" style={t === 'Opto' ? { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' } : t === 'Imaging' ? { background: 'rgba(34,197,94,0.1)', color: '#86efac' } : t === 'AD' ? { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' } : t === 'DBD' ? { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' } : { background: 'rgba(253,224,71,0.1)', color: '#fde047' }}>{t}</span>)}
                   </div>
                   {s.genotype && s.genotype !== '+' && <p className="text-xs mono truncate mt-1" style={{ color: 'rgba(167,139,250,0.4)' }}>{s.genotype}</p>}
                 </div>
@@ -2839,7 +2851,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                     const flipDays = getFlipDays(s);
                     const needsFlip = isMine && age !== null && age >= flipDays;
                     const nearFlip = isMine && age !== null && !needsFlip && age / flipDays >= 0.8;
-                    const dc = detect(s.genotype, s.name);
+                    const tags = stockTags(s);
                     return (
                       <div key={s.id} className="card p-4" style={{
                         ...(needsFlip ? { borderColor: 'rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.06)' } : nearFlip ? { borderColor: 'rgba(245,158,11,0.15)', background: 'rgba(245,158,11,0.06)' } : {}),
@@ -2858,8 +2870,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                             <div className="flex items-center gap-2 flex-wrap mb-0.5">
                               <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
                               <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{(s.variant || 'stock') === 'expanded' ? '21d' : tempLabel(s.location)}</span>
-                              {dc.o && <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }}>opto</span>}
-                              {dc.c && <span className="badge" style={{ background: 'rgba(34,197,94,0.1)', color: '#86efac' }}>imaging</span>}
+                              {tags.map(t => <span key={t} className="badge" style={t === 'Opto' ? { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' } : t === 'Imaging' ? { background: 'rgba(34,197,94,0.1)', color: '#86efac' } : t === 'AD' ? { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' } : t === 'DBD' ? { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' } : { background: 'rgba(253,224,71,0.1)', color: '#fde047' }}>{t}</span>)}
                               {s.maintainer && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{s.maintainer}</span>}
                               {((s.copies || 1) > 1 || filtered.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'))) && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>#{s.copies || 1}</span>}
                             </div>

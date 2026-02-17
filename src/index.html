@@ -2877,7 +2877,6 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap mb-0.5">
                               <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
-                              <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{(s.variant || 'stock') === 'expanded' ? '21d' : tempLabel(s.location)}</span>
                               <TagBadges tags={tags} limit={isTouchDevice() ? 2 : undefined} />
                               {s.maintainer && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{s.maintainer}</span>}
                               {((s.copies || 1) > 1 || filtered.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'))) && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>#{s.copies || 1}</span>}

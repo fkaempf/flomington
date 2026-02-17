@@ -4329,11 +4329,11 @@ setTimeout(function(){ window.print(); }, 500);
             <option value="grid">Grid</option>
             <option value="no">No grid</option>
           </select>
-          <div className="compact flex items-center gap-1 px-2 py-1.5 rounded-lg"
-            style={{ border: skipLabels > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: skipLabels > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)' }}>
-            <span className="text-xs font-semibold" style={{ color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)' }}>Skip</span>
+          <div className="flex items-center gap-1 px-2 py-1.5 font-semibold rounded-lg"
+            style={{ fontSize: '11px', border: skipLabels > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: skipLabels > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)', height: '30px', boxSizing: 'border-box' }}>
+            <span>Skip</span>
             <input type="number" min="0" max={spec.cols * spec.rows - 1} value={skipLabels} onChange={e => setSkipLabels(Math.max(0, parseInt(e.target.value) || 0))}
-              className="w-8 text-xs font-semibold text-center bg-transparent outline-none" style={{ color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)' }} />
+              className="w-8 text-center bg-transparent outline-none font-semibold" style={{ fontSize: '11px', color: 'inherit' }} />
           </div>
         </div>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Feed label paper with arrow pointing right →</p>

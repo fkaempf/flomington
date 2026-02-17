@@ -569,6 +569,8 @@ function stockTags(s) {
   const g = (s.genotype || '').toLowerCase();
   const n = (s.notes || '').toLowerCase();
   const all = g + ' ' + n;
+  if (/\bdead\b/i.test(s.notes || '')) tags.push('Dead');
+  if (/\balive\b/i.test(s.notes || '')) tags.push('Alive');
   if (OPTO.some(k => all.includes(k))) tags.push('Opto');
   if (CALC.some(k => all.includes(k)) || all.includes('gfp')) tags.push('Imaging');
   const hasAD = all.includes('p65.ad') || all.includes('-p65.ad}') || n.includes(' ad ') || n.includes(' ad(') || /\bAD\b/.test(s.notes || '');
@@ -579,7 +581,7 @@ function stockTags(s) {
   if (/gal4/i.test(g) && !hasAD && !hasDBD) tags.push('GAL4');
   return tags;
 }
-const TAG_STYLE = { Opto: { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }, Imaging: { background: 'rgba(34,197,94,0.1)', color: '#86efac' }, AD: { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' }, DBD: { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' }, 'Split-GAL4': { background: 'rgba(139,92,246,0.1)', color: '#a78bfa' } };
+const TAG_STYLE = { Dead: { background: 'rgba(239,68,68,0.25)', color: '#fca5a5' }, Alive: { background: 'rgba(34,197,94,0.25)', color: '#86efac' }, Opto: { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }, Imaging: { background: 'rgba(34,197,94,0.1)', color: '#86efac' }, AD: { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' }, DBD: { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' }, 'Split-GAL4': { background: 'rgba(139,92,246,0.1)', color: '#a78bfa' } };
 function TagBadges({ tags, limit }) {
   const show = limit ? tags.slice(0, limit) : tags;
   const more = limit && tags.length > limit ? tags.length - limit : 0;

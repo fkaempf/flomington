@@ -582,9 +582,10 @@ function stockTags(s) {
   else { if (hasAD) tags.push('AD'); if (hasDBD) tags.push('DBD'); }
   if (/lexa/i.test(g) || /\blexa\b/i.test(n)) tags.push('LexA');
   if (/gal4/i.test(g) && !hasAD && !hasDBD) tags.push('GAL4');
+  if (/uas/i.test(g) || /\buas\b/i.test(n) || /\buas\b/i.test(s.name || '')) tags.push('UAS');
   return tags;
 }
-const TAG_STYLE = { Dead: { background: 'rgba(239,68,68,0.25)', color: '#fca5a5' }, Alive: { background: 'rgba(34,197,94,0.25)', color: '#86efac' }, Opto: { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }, Imaging: { background: 'rgba(34,197,94,0.1)', color: '#86efac' }, AD: { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' }, DBD: { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' }, 'Split-GAL4': { background: 'rgba(139,92,246,0.1)', color: '#a78bfa' } };
+const TAG_STYLE = { Dead: { background: 'rgba(239,68,68,0.25)', color: '#fca5a5' }, Alive: { background: 'rgba(34,197,94,0.25)', color: '#86efac' }, Opto: { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }, Imaging: { background: 'rgba(34,197,94,0.1)', color: '#86efac' }, AD: { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' }, DBD: { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' }, 'Split-GAL4': { background: 'rgba(139,92,246,0.1)', color: '#a78bfa' }, UAS: { background: 'rgba(251,191,36,0.1)', color: '#fbbf24' } };
 function TagBadges({ tags, limit }) {
   const show = limit ? tags.slice(0, limit) : tags;
   const more = limit && tags.length > limit ? tags.length - limit : 0;

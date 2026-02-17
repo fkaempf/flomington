@@ -3340,7 +3340,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
                 </a>
               )}
               {(f.janeliaLine || parseJaneliaLine(f.notes)) && (
-                <a href={janeliaUrl(f.janeliaLine || parseJaneliaLine(f.notes))} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: '#22c55e' }}>
+                <a href={janeliaUrl(f.janeliaLine || parseJaneliaLine(f.notes))} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: 'var(--accent-2)' }}>
                   FlyLight ({f.janeliaLine || parseJaneliaLine(f.notes)}) ↗
                 </a>
               )}
@@ -3348,7 +3348,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
           )}
           {!(f.source && f.sourceId && stockUrl(f.source, f.sourceId)) && (f.janeliaLine || parseJaneliaLine(f.notes)) && (
             <div className="flex gap-3 mb-3">
-              <a href={janeliaUrl(f.janeliaLine || parseJaneliaLine(f.notes))} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: '#22c55e' }}>
+              <a href={janeliaUrl(f.janeliaLine || parseJaneliaLine(f.notes))} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: 'var(--accent-2)' }}>
                 FlyLight ({f.janeliaLine || parseJaneliaLine(f.notes)}) ↗
               </a>
             </div>

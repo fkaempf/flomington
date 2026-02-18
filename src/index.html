@@ -451,17 +451,19 @@ function toCamel(obj, fieldMap) {
   return out;
 }
 
-// Lazy Supabase client — reads URL/key from localStorage
+// Supabase config — hardcoded defaults, localStorage can override
+const SUPABASE_URL = 'https://rawkyzzqyvizrglanyzi.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_yfVKfIlgBL9OsTW3uDgx8A_zBkjFyys';
+
 let _sb = null;
 function getSb() {
   if (_sb) return _sb;
   const rawUrl = localStorage.getItem('flo-sb-url');
   const rawKey = localStorage.getItem('flo-sb-key');
-  if (!rawUrl || !rawKey) return null;
+  const url = (rawUrl ? rawUrl.replace(/^"|"$/g, '') : '') || SUPABASE_URL;
+  const key = (rawKey ? rawKey.replace(/^"|"$/g, '') : '') || SUPABASE_KEY;
+  if (!url || !key) return null;
   try {
-    const url = rawUrl.replace(/^"|"$/g, '');
-    const key = rawKey.replace(/^"|"$/g, '');
-    if (!url || !key) return null;
     _sb = window.supabase.createClient(url, key);
     return _sb;
   } catch (e) {
@@ -4749,7 +4751,7 @@ function App() {
   const [bulkBarActive, setBulkBarActive] = useState(false);
   const [sbUrl, setSbUrl] = useLS('flo-sb-url', '');
   const [sbKey, setSbKey] = useLS('flo-sb-key', '');
-  const sbConfigured = !!(sbUrl && sbKey);
+  const sbConfigured = !!(sbUrl || SUPABASE_URL) && !!(sbKey || SUPABASE_KEY);
   const [syncStatus, setSyncStatus] = useState('');
   const syncTimer = useRef(null);
   const realtimeUpdateRef = useRef(false);

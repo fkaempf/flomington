@@ -2711,19 +2711,10 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   const [editing, setEditing] = useState(() => {
     if (initialStockId) {
       const s = stocks.find(x => x.id === initialStockId || x.id.startsWith(initialStockId));
-      if (s && s.maintainer && s.maintainer !== currentUser) return null;
       return s ? { ...s } : null;
     }
     return null;
   });
-  useEffect(() => {
-    if (initialStockId) {
-      const s = stocks.find(x => x.id === initialStockId || x.id.startsWith(initialStockId));
-      if (s && s.maintainer && s.maintainer !== currentUser) {
-        setAccessDenied(s.name);
-      }
-    }
-  }, []);
   const [deleting, setDeleting] = useState(null);
   const [flipCat, setFlipCat] = useState(null);
   const [flipDate, setFlipDate] = useState('');
@@ -4310,7 +4301,7 @@ function crossLabelText(c, stocks) {
 
 function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCrosses, setPrintListCrosses, stocks, crosses, toast }) {
   const [format, setFormat] = useState('L7161');
-  const [showGrid, setShowGrid] = useState(true);
+  const [showGrid, setShowGrid] = useState(false);
   const [showQR, setShowQR] = useState(true);
   const [skipLabels, setSkipLabels] = useState(0);
 

@@ -10,6 +10,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
@@ -408,56 +409,126 @@ const dFromNow = d => { if (!d) return 0; const ms = toDate(d) - toDate(today())
 
 const isTouchDevice = () => window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
 
-/* ========== SHEETS SYNC ========== */
-const SYNC_FIELDS = ['id', 'name', 'genotype', 'variant', 'category', 'location', 'source', 'sourceId', 'flybaseId', 'janeliaLine', 'maintainer', 'notes', 'isGift', 'giftFrom', 'createdAt', 'lastFlipped', 'copies'];
-const CROSS_SYNC_FIELDS = ['id', 'parentA', 'parentB', 'temperature', 'setupDate', 'status', 'owner', 'notes', 'targetCount', 'collected', 'vials', 'virginsCollected', 'manualFlipDate', 'manualEcloseDate', 'manualVirginDate', 'crossType', 'parentCrossId', 'experimentType', 'experimentDate', 'retinalStartDate', 'waitStartDate', 'ripeningStartDate'];
+/* ========== SUPABASE SYNC ========== */
 
-async function sheetsPull(url) {
-  const res = await fetch(url);
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  const stocks = (data.stocks || []).map(s => {
-    if (s.isGift === 'true') s.isGift = true;
-    else if (s.isGift === 'false' || s.isGift === '') delete s.isGift;
+const STOCK_FIELD_MAP = {
+  id: 'id', name: 'name', genotype: 'genotype', variant: 'variant',
+  category: 'category', location: 'location', source: 'source',
+  sourceId: 'source_id', flybaseId: 'flybase_id', janeliaLine: 'janelia_line',
+  maintainer: 'maintainer', notes: 'notes', isGift: 'is_gift',
+  giftFrom: 'gift_from', createdAt: 'created_at', lastFlipped: 'last_flipped',
+  copies: 'copies',
+};
+
+const CROSS_FIELD_MAP = {
+  id: 'id', parentA: 'parent_a', parentB: 'parent_b', temperature: 'temperature',
+  setupDate: 'setup_date', status: 'status', owner: 'owner', notes: 'notes',
+  targetCount: 'target_count', collected: 'collected', vials: 'vials',
+  virginsCollected: 'virgins_collected', manualFlipDate: 'manual_flip_date',
+  manualEcloseDate: 'manual_eclose_date', manualVirginDate: 'manual_virgin_date',
+  crossType: 'cross_type', parentCrossId: 'parent_cross_id',
+  experimentType: 'experiment_type', experimentDate: 'experiment_date',
+  retinalStartDate: 'retinal_start_date', waitStartDate: 'wait_start_date',
+  ripeningStartDate: 'ripening_start_date',
+};
+
+function toSnake(obj, fieldMap) {
+  const out = {};
+  for (const [camel, snake] of Object.entries(fieldMap)) {
+    if (obj[camel] !== undefined && obj[camel] !== null) out[snake] = obj[camel];
+  }
+  return out;
+}
+
+function toCamel(obj, fieldMap) {
+  const reverseMap = {};
+  for (const [camel, snake] of Object.entries(fieldMap)) reverseMap[snake] = camel;
+  const out = {};
+  for (const [key, val] of Object.entries(obj)) {
+    const camelKey = reverseMap[key] || key;
+    out[camelKey] = val;
+  }
+  return out;
+}
+
+// Lazy Supabase client — reads URL/key from localStorage
+let _sb = null;
+function getSb() {
+  if (_sb) return _sb;
+  const rawUrl = localStorage.getItem('flo-sb-url');
+  const rawKey = localStorage.getItem('flo-sb-key');
+  if (!rawUrl || !rawKey) return null;
+  try {
+    const url = rawUrl.replace(/^"|"$/g, '');
+    const key = rawKey.replace(/^"|"$/g, '');
+    if (!url || !key) return null;
+    _sb = window.supabase.createClient(url, key);
+    return _sb;
+  } catch (e) {
+    console.error('Supabase init failed:', e);
+    return null;
+  }
+}
+function resetSb() { _sb = null; }
+
+async function supabasePull() {
+  const sb = getSb();
+  if (!sb) throw new Error('Supabase not configured');
+  const [stocksRes, crossesRes, pinsRes] = await Promise.all([
+    sb.from('stocks').select('*'),
+    sb.from('crosses').select('*'),
+    sb.from('pins').select('*'),
+  ]);
+  if (stocksRes.error) throw stocksRes.error;
+  if (crossesRes.error) throw crossesRes.error;
+  if (pinsRes.error) throw pinsRes.error;
+  const stocks = (stocksRes.data || []).map(row => {
+    const s = toCamel(row, STOCK_FIELD_MAP);
+    if (s.isGift === false) delete s.isGift;
     return s;
   });
-  const crosses = (data.crosses || []).map(c => {
-    if (typeof c.collected === 'string') try { c.collected = JSON.parse(c.collected); } catch { c.collected = []; }
-    else if (!c.collected) c.collected = [];
-    if (typeof c.vials === 'string') try { c.vials = JSON.parse(c.vials); } catch { c.vials = []; }
-    else if (!c.vials) c.vials = [];
+  const crosses = (crossesRes.data || []).map(row => {
+    const c = toCamel(row, CROSS_FIELD_MAP);
+    if (!c.collected) c.collected = [];
+    if (!c.vials) c.vials = [];
     if (c.targetCount) c.targetCount = parseInt(c.targetCount) || 0;
     if (c.virginsCollected) c.virginsCollected = parseInt(c.virginsCollected) || 0;
     return c;
   });
-  const pins = data.pins || [];
+  const pins = (pinsRes.data || []).map(row => ({ user: row.user_name, hash: row.hash }));
   return { stocks, crosses, pins };
 }
 
-async function sheetsPush(url, stocks, crosses, pins) {
-  const cleanStocks = stocks.map(s => {
-    const o = {};
-    SYNC_FIELDS.forEach(k => { if (s[k] !== undefined && s[k] !== null) o[k] = s[k]; });
-    return o;
-  });
-  const cleanCrosses = (crosses || []).map(c => {
-    const o = {};
-    CROSS_SYNC_FIELDS.forEach(k => {
-      if (c[k] !== undefined && c[k] !== null) {
-        o[k] = Array.isArray(c[k]) ? JSON.stringify(c[k]) : c[k];
-      }
-    });
-    return o;
-  });
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ stocks: cleanStocks, crosses: cleanCrosses, pins: pins || [] }),
-    redirect: 'follow',
-  });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  return data;
+async function supabasePush(stocks, crosses, pins) {
+  const sb = getSb();
+  if (!sb) throw new Error('Supabase not configured');
+  if (stocks && stocks.length > 0) {
+    const rows = stocks.map(s => toSnake(s, STOCK_FIELD_MAP));
+    const { error } = await sb.from('stocks').upsert(rows, { onConflict: 'id' });
+    if (error) throw error;
+  }
+  if (crosses && crosses.length > 0) {
+    const rows = crosses.map(c => toSnake(c, CROSS_FIELD_MAP));
+    const { error } = await sb.from('crosses').upsert(rows, { onConflict: 'id' });
+    if (error) throw error;
+  }
+  if (pins && pins.length > 0) {
+    const rows = pins.map(p => ({ user_name: p.user, hash: p.hash }));
+    const { error } = await sb.from('pins').upsert(rows, { onConflict: 'user_name' });
+    if (error) throw error;
+  }
+  return { stockCount: stocks?.length || 0, crossCount: crosses?.length || 0 };
+}
+
+async function supabaseSyncDeletes(table, localIds) {
+  const sb = getSb();
+  if (!sb) return;
+  const { data } = await sb.from(table).select('id');
+  if (!data) return;
+  const remoteOnly = data.filter(r => !localIds.has(r.id)).map(r => r.id);
+  if (remoteOnly.length > 0) {
+    await sb.from(table).delete().in('id', remoteOnly);
+  }
 }
 
 function mergeStocks(local, remote) {
@@ -476,6 +547,56 @@ function mergeCrosses(local, remote) {
     if (!localIds.has(rc.id)) merged.push(rc);
   });
   return merged;
+}
+
+function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
+  const subRef = React.useRef(null);
+  React.useEffect(() => {
+    const sb = getSb();
+    if (!sb) return;
+    const channel = sb.channel('db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stocks' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const item = toCamel(payload.new, STOCK_FIELD_MAP);
+          if (item.isGift === false) delete item.isGift;
+          setStocks(prev => {
+            const idx = prev.findIndex(s => s.id === item.id);
+            if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...item }; return next; }
+            return [...prev, item];
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.id) {
+          setStocks(prev => prev.filter(s => s.id !== payload.old.id));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'crosses' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const item = toCamel(payload.new, CROSS_FIELD_MAP);
+          if (!item.collected) item.collected = [];
+          if (!item.vials) item.vials = [];
+          setCrosses(prev => {
+            const idx = prev.findIndex(c => c.id === item.id);
+            if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...item }; return next; }
+            return [...prev, item];
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.id) {
+          setCrosses(prev => prev.filter(c => c.id !== payload.old.id));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pins' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const p = payload.new;
+          if (p.user_name && p.hash) {
+            localStorage.setItem('flo-pin-' + p.user_name, p.hash);
+            setPinVersion(v => v + 1);
+          }
+        }
+      })
+      .subscribe();
+    subRef.current = channel;
+    return () => {
+      if (subRef.current) { sb.removeChannel(subRef.current); subRef.current = null; }
+    };
+  }, []);
 }
 
 const is18 = t => t === '18';
@@ -3570,7 +3691,7 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross 
 }
 
 /* ========== SETTINGS SCREEN ========== */
-function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setTransfers, setCollections, notifyVirgins, setNotifyVirgins, syncUrl, setSyncUrl, syncStatus, setSyncStatus, currentUser }) {
+function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setTransfers, setCollections, notifyVirgins, setNotifyVirgins, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser }) {
   const fileRef = useRef(null);
   const [showRef, setShowRef] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -3708,9 +3829,8 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
 
   function changePin() {
     USERS.forEach(u => localStorage.removeItem(`flo-pin-${u}`));
-    // Clear PINs from sheets too so they don't re-sync
-    if (syncUrl) {
-      sheetsPush(syncUrl, stocks, crosses, []).then(() => window.location.reload()).catch(() => window.location.reload());
+    if (sbConfigured) {
+      supabasePush(stocks, crosses, []).then(() => window.location.reload()).catch(() => window.location.reload());
     } else {
       window.location.reload();
     }
@@ -3789,29 +3909,30 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       {currentUser === 'Flo' && adminUnlocked && (
       <>
       <div className="card p-5">
-        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Google Sheets Sync</p>
-        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Sync stocks, crosses &amp; PINs to Google Sheets.</p>
-        <Inp value={syncUrl} onChange={e => setSyncUrl(e.target.value)} placeholder="Apps Script web app URL" className="mb-2" />
-        {syncUrl && (
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Supabase Sync</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Sync stocks, crosses &amp; PINs to Supabase.</p>
+        <Inp value={sbUrl} onChange={e => { setSbUrl(e.target.value); resetSb(); }} placeholder="Supabase project URL" className="mb-2" />
+        <Inp value={sbKey} onChange={e => { setSbKey(e.target.value); resetSb(); }} placeholder="Supabase anon key" type="password" className="mb-2" />
+        {sbConfigured && (
           <div className="flex gap-2 mb-2">
             <Btn v="s" onClick={() => {
               setSyncStatus('Pushing...');
               const pins = USERS.map(u => { const h = localStorage.getItem(`flo-pin-${u}`); return h ? { user: u, hash: h } : null; }).filter(Boolean);
-              sheetsPush(syncUrl, stocks, crosses, pins).then(r => {
+              supabasePush(stocks, crosses, pins).then(r => {
                 setSyncStatus('Pushed ' + (r.stockCount || 0) + ' stocks, ' + (r.crossCount || 0) + ' crosses');
-                toast.add('Data pushed to sheet');
+                toast.add('Data pushed to Supabase');
               }).catch(e => { setSyncStatus('Push failed'); toast.add('Push failed: ' + e.message); });
-            }} className="flex-1">Push to Sheet</Btn>
+            }} className="flex-1">Push</Btn>
             <Btn v="s" onClick={() => {
               setSyncStatus('Pulling...');
-              sheetsPull(syncUrl).then(remote => {
+              supabasePull().then(remote => {
                 if (remote.stocks) setStocks(local => mergeStocks(local, remote.stocks));
                 if (remote.crosses) setCrosses(local => mergeCrosses(local, remote.crosses));
                 if (remote.pins) remote.pins.forEach(p => { if (p.user && p.hash && !localStorage.getItem(`flo-pin-${p.user}`)) localStorage.setItem(`flo-pin-${p.user}`, p.hash); });
                 setSyncStatus('Pulled ' + (remote.stocks || []).length + ' stocks, ' + (remote.crosses || []).length + ' crosses');
-                toast.add('Data pulled from sheet');
+                toast.add('Data pulled from Supabase');
               }).catch(e => { setSyncStatus('Pull failed'); toast.add('Pull failed: ' + e.message); });
-            }} className="flex-1">Pull from Sheet</Btn>
+            }} className="flex-1">Pull</Btn>
           </div>
         )}
         {syncStatus && <p className="text-xs" style={{ color: 'var(--text-3)' }}>{syncStatus}</p>}
@@ -4527,27 +4648,26 @@ function App() {
   const [printListCrosses, setPrintListCrosses] = useState([]);
   const [printOpen, setPrintOpen] = useState(false);
   const [bulkBarActive, setBulkBarActive] = useState(false);
-  const SHEETS_SYNC_URL = 'https://script.google.com/macros/s/AKfycbxuR_-oBOJlg4bwL-A0S1wIF2irDL0zky57REwP_kLEHBnhy8fgUm_MpSk4ct22kHCdKw/exec';
-  const [syncUrl, setSyncUrl] = useLS('flo-sync-url', SHEETS_SYNC_URL);
-  useEffect(() => { if (!syncUrl) setSyncUrl(SHEETS_SYNC_URL); }, []);
+  const [sbUrl, setSbUrl] = useLS('flo-sb-url', '');
+  const [sbKey, setSbKey] = useLS('flo-sb-key', '');
+  const sbConfigured = !!(sbUrl && sbKey);
   const [syncStatus, setSyncStatus] = useState('');
   const syncTimer = useRef(null);
+  const realtimeUpdateRef = useRef(false);
 
   const [pinVersion, setPinVersion] = useState(0);
-  const [initialLoading, setInitialLoading] = useState(!!syncUrl);
+  const [initialLoading, setInitialLoading] = useState(sbConfigured);
   const initialPushBlocked = useRef(true);
 
-  // Pull from sheet FIRST on load — blocks UI until done
+  // Pull from Supabase FIRST on load — blocks UI until done
   const hasPulled = useRef(false);
   useEffect(() => {
-    if (!syncUrl || hasPulled.current) { setInitialLoading(false); return; }
+    if (!sbConfigured || hasPulled.current) { setInitialLoading(false); return; }
     hasPulled.current = true;
     setSyncStatus('Syncing...');
-    sheetsPull(syncUrl).then(remote => {
-      // Sheet is source of truth on load — replace local data
+    supabasePull().then(remote => {
       if (remote.stocks) setStocks(remote.stocks);
       if (remote.crosses) setCrosses(remote.crosses);
-      // Sync PINs — store remote hashes locally if missing
       if (remote.pins && remote.pins.length > 0) {
         let pinSynced = false;
         remote.pins.forEach(p => {
@@ -4561,7 +4681,6 @@ function App() {
         }
       }
       setSyncStatus('Synced ' + new Date().toLocaleTimeString());
-      // Allow push after initial pull completes (prevent push of stale data)
       setTimeout(() => { initialPushBlocked.current = false; }, 1000);
       setInitialLoading(false);
       // Backfill Janelia lines for existing Bloomington stocks
@@ -4587,22 +4706,32 @@ function App() {
       initialPushBlocked.current = false;
       setInitialLoading(false);
     });
-  }, [syncUrl]);
+  }, [sbConfigured]);
 
-  // Auto-push stocks, crosses, and PINs to sheet on changes (debounced)
+  // Auto-push to Supabase on changes (debounced)
   useEffect(() => {
-    if (!syncUrl || initialPushBlocked.current) return;
+    if (!sbConfigured || initialPushBlocked.current) return;
+    if (realtimeUpdateRef.current) { realtimeUpdateRef.current = false; return; }
     clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => {
       const pins = USERS.map(u => {
         const h = localStorage.getItem(`flo-pin-${u}`);
         return h ? { user: u, hash: h } : null;
       }).filter(Boolean);
-      sheetsPush(syncUrl, stocks, crosses, pins).then(() => {
+      supabasePush(stocks, crosses, pins).then(() => {
+        supabaseSyncDeletes('stocks', new Set(stocks.map(s => s.id)));
+        supabaseSyncDeletes('crosses', new Set(crosses.map(c => c.id)));
         setSyncStatus('Synced ' + new Date().toLocaleTimeString());
       }).catch(() => setSyncStatus('Push failed'));
     }, 3000);
-  }, [stocks, crosses, syncUrl, pinVersion]);
+  }, [stocks, crosses, sbConfigured, pinVersion]);
+
+  // Real-time subscriptions for cross-device sync
+  useSupabaseRealtime(
+    (updater) => { realtimeUpdateRef.current = true; setStocks(updater); },
+    (updater) => { realtimeUpdateRef.current = true; setCrosses(updater); },
+    setPinVersion
+  );
 
   const [newCrossOpen, setNewCrossOpen] = useState(false);
   const [virginCrossStock, setVirginCrossStock] = useState(null);
@@ -4734,7 +4863,7 @@ function App() {
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} />}
           {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
-          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} syncUrl={syncUrl} setSyncUrl={setSyncUrl} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
+          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
         </div>
       </main>
 

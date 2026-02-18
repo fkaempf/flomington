@@ -3913,8 +3913,8 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Supabase Sync</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Sync stocks, crosses &amp; PINs to Supabase.</p>
-        <Inp value={sbUrl} onChange={e => { setSbUrl(e.target.value); resetSb(); }} placeholder="Supabase project URL" className="mb-2" />
-        <Inp value={sbKey} onChange={e => { setSbKey(e.target.value); resetSb(); }} placeholder="Supabase anon key" type="password" className="mb-2" />
+        <Inp value={sbUrl || SUPABASE_URL} onChange={e => { setSbUrl(e.target.value); resetSb(); }} placeholder="Supabase project URL" className="mb-2" />
+        <Inp value={sbKey || SUPABASE_KEY} onChange={e => { setSbKey(e.target.value); resetSb(); }} placeholder="Supabase anon key" type="password" className="mb-2" />
         {sbConfigured && (
           <div className="flex gap-2 mb-2">
             <Btn v="s" onClick={() => {
@@ -4631,7 +4631,7 @@ function AmbientFly() {
 
         if (dist >= totalLen) {
           setVisible(false);
-          timeout = setTimeout(startFlight, 15000 + Math.random() * 30000);
+          timeout = setTimeout(startFlight, 60000 + Math.random() * 84000); // 1–2.4 min
           return;
         }
 
@@ -4657,8 +4657,8 @@ function AmbientFly() {
       startFlight();
     };
 
-    // First appearance after 5-15 seconds
-    timeout = setTimeout(startFlight, 5000 + Math.random() * 10000);
+    // First appearance after 1–2.4 min
+    timeout = setTimeout(startFlight, 60000 + Math.random() * 84000);
 
     return () => {
       cancelAnimationFrame(raf);

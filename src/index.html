@@ -4798,11 +4798,15 @@ function App() {
   }, [sbConfigured]);
 
   // Auto-push to Supabase on changes (debounced)
+  const pendingPush = useRef(false);
+  const pushNow = useRef(() => {});
   useEffect(() => {
     if (!sbConfigured || initialPushBlocked.current) return;
-    if (realtimeUpdateRef.current) { realtimeUpdateRef.current = false; return; }
+    if (realtimeUpdateRef.current) { realtimeUpdateRef.current = false; if (!pendingPush.current) return; }
+    pendingPush.current = true;
     clearTimeout(syncTimer.current);
-    syncTimer.current = setTimeout(() => {
+    const doPush = () => {
+      pendingPush.current = false;
       const pins = USERS.map(u => {
         const h = localStorage.getItem(`flo-pin-${u}`);
         return h ? { user: u, hash: h } : null;
@@ -4811,9 +4815,22 @@ function App() {
         supabaseSyncDeletes('stocks', new Set(stocks.map(s => s.id)));
         supabaseSyncDeletes('crosses', new Set(crosses.map(c => c.id)));
         setSyncStatus('Synced ' + new Date().toLocaleTimeString());
-      }).catch(() => setSyncStatus('Push failed'));
-    }, 3000);
+      }).catch(() => {
+        setSyncStatus('Push failed – retrying...');
+        setTimeout(doPush, 5000);
+      });
+    };
+    pushNow.current = doPush;
+    syncTimer.current = setTimeout(doPush, 3000);
   }, [stocks, crosses, sbConfigured, pinVersion]);
+
+  // Flush pending push on page close/hide
+  useEffect(() => {
+    const flush = () => { if (pendingPush.current) pushNow.current(); };
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
 
   // Real-time subscriptions for cross-device sync
   useSupabaseRealtime(

@@ -556,6 +556,11 @@ const _deletedIds = new Set();
 function markDeleted(id) { _deletedIds.add(id); setTimeout(() => _deletedIds.delete(id), 15000); }
 function isDeletedLocally(id) { return _deletedIds.has(id); }
 
+// Track locally edited IDs so realtime doesn't overwrite pending changes
+const _editedIds = new Set();
+function markEdited(id) { _editedIds.add(id); setTimeout(() => _editedIds.delete(id), 10000); }
+function isEditedLocally(id) { return _editedIds.has(id); }
+
 // Immediately delete from Supabase (don't wait for debounced push)
 function supabaseDeleteNow(table, id) {
   const sb = getSb();
@@ -571,7 +576,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
     const channel = sb.channel('db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stocks' }, payload => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          if (isDeletedLocally(payload.new.id)) return;
+          if (isDeletedLocally(payload.new.id) || isEditedLocally(payload.new.id)) return;
           const item = toCamel(payload.new, STOCK_FIELD_MAP);
           if (item.isGift === false) delete item.isGift;
           setStocks(prev => {
@@ -585,7 +590,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'crosses' }, payload => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          if (isDeletedLocally(payload.new.id)) return;
+          if (isDeletedLocally(payload.new.id) || isEditedLocally(payload.new.id)) return;
           const item = toCamel(payload.new, CROSS_FIELD_MAP);
           if (!item.collected) item.collected = [];
           if (!item.vials) item.vials = [];
@@ -1850,6 +1855,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
   }
 
   function setStatus(st) {
+    markEdited(cross.id);
     const extra = st === 'waiting for progeny' ? { waitStartDate: today() } : {};
     setCrosses(p => p.map(c => c.id === cross.id ? { ...c, status: st, ...extra } : c));
     toast.add(`Set to: ${st}`);
@@ -2121,6 +2127,7 @@ function EditCrossModal({ open, onClose, cross, stocks, setCrosses, toast, allCr
   if (!open) return null;
 
   function save() {
+    markEdited(cross.id);
     setCrosses(p => p.map(c => c.id === cross.id ? { ...c, ...f } : c));
     toast.add('Cross updated');
     onClose();
@@ -2467,6 +2474,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
   }, [stocks, currentUser]);
 
   function flipStock(id) {
+    markEdited(id);
     setStocks(p => p.map(s => s.id === id ? { ...s, lastFlipped: today() } : s));
     toast.add('Flipped');
   }
@@ -2772,6 +2780,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   }, [stocks, search, catFilter, showAll, currentUser, sortBy, copyFilter]);
 
   function flipStock(id) {
+    markEdited(id);
     setStocks(p => p.map(s => s.id === id ? { ...s, lastFlipped: today() } : s));
     toast.add('Flipped');
   }
@@ -2805,11 +2814,13 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   }
   function exitSelect() { setSelectMode(false); onBulkActive?.(false); }
   function bulkFlip() {
+    selected.forEach(id => markEdited(id));
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, lastFlipped: today() } : s));
     toast.add(`Flipped ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
     exitSelect();
   }
   function bulkSetFlipDate(d) {
+    selected.forEach(id => markEdited(id));
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, lastFlipped: d } : s));
     toast.add(`Set flip date on ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
     setBulkAction(null);
@@ -2839,12 +2850,14 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
     exitSelect();
   }
   function bulkMoveCollection(cat) {
+    selected.forEach(id => markEdited(id));
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, category: cat } : s));
     toast.add(`Moved ${selected.size} to ${cat}`);
     setBulkAction(null);
     exitSelect();
   }
   function bulkChangeMaintainer(user) {
+    selected.forEach(id => markEdited(id));
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, maintainer: user } : s));
     toast.add(`${user} assigned to ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
     setBulkAction(null);
@@ -2852,6 +2865,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   }
   function bulkAppend(text) {
     if (!text.trim()) return;
+    selected.forEach(id => markEdited(id));
     setStocks(p => p.map(s => selected.has(s.id) ? { ...s, name: s.name + text } : s));
     toast.add(`Appended text to ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
     setBulkAction(null);
@@ -3382,9 +3396,12 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
       if (maintainers.length === 1 && !saving.maintainer) saving.maintainer = maintainers[0];
     }
     if (isNew) {
-      setStocks(p => [...p, { ...saving, id: uid(), createdAt: today(), lastFlipped: today() }]);
+      const newId = uid();
+      markEdited(newId);
+      setStocks(p => [...p, { ...saving, id: newId, createdAt: today(), lastFlipped: today() }]);
       toast.add('Stock added');
     } else {
+      markEdited(saving.id);
       setStocks(p => p.map(s => s.id === saving.id ? { ...s, ...saving } : s));
       toast.add('Stock updated');
     }

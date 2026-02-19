@@ -2402,6 +2402,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
   const [showCompleted, setShowCompleted] = useState(false);
   const [flipCat, setFlipCat] = useState(null);
   const [flipDate, setFlipDate] = useState(today());
+  const [homeEditStock, setHomeEditStock] = useState(null);
   const [selectedCrossId, setSelectedCrossId] = useState(initialCrossId || null);
   const activeRef = useRef(null);
   const healthRef = useRef(null);
@@ -2656,13 +2657,13 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
             <p className="section-header">Stocks Due for Flipping</p>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {dueIndividual.map(s => (
-                <div key={s.id} className="card p-4" style={{ borderColor: 'rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.04)' }}>
+                <div key={s.id} className="card p-4 cursor-pointer" style={{ borderColor: 'rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.04)' }} onClick={() => setHomeEditStock({ ...s })}>
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</p>
                       <p className="text-xs mt-0.5" style={{ color: '#fca5a5' }}>{-dFromNow(s.lastFlipped || s.createdAt)}d — needs flip</p>
                     </div>
-                    <button onClick={() => flipStock(s.id)}
+                    <button onClick={(e) => { e.stopPropagation(); flipStock(s.id); }}
                       className="touch px-4 py-2 text-sm font-semibold rounded-xl transition-all active:scale-95 shrink-0"
                       style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
                       Flip
@@ -2707,15 +2708,46 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
 
 
       {/* Flip date modal for stock collections */}
-      <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${typeof flipCat === 'object' ? flipCat?.cat : flipCat} — Set Last Flipped`}>
+      <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${typeof flipCat === 'object' ? flipCat?.cat : flipCat} — Flip`}>
         {flipCat && (() => {
           const fc = typeof flipCat === 'object' ? flipCat : { cat: flipCat, copies: null };
           const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || Number(s.copies || 1) === fc.copies));
+          const dueStocks = catStocks.filter(s => {
+            const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
+            return age !== null && age >= getFlipDays(s);
+          }).sort((a, b) => {
+            const aa = -(a.lastFlipped || a.createdAt ? dFromNow(a.lastFlipped || a.createdAt) : 0);
+            const bb = -(b.lastFlipped || b.createdAt ? dFromNow(b.lastFlipped || b.createdAt) : 0);
+            return bb - aa;
+          });
           const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` #${fc.copies}` : '');
           return (
             <div>
-              <p className="text-xs mb-4" style={{ color: 'var(--text-3)' }}>Set the last flipped date for all {catStocks.length} stocks in {label}.</p>
-              <Field label="Last flipped date">
+              {dueStocks.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: '#fca5a5' }}>{dueStocks.length} stock{dueStocks.length !== 1 ? 's' : ''} due</p>
+                  <div className="space-y-1.5" style={{ maxHeight: '240px', overflowY: 'auto' }}>
+                    {dueStocks.map(s => {
+                      const age = -dFromNow(s.lastFlipped || s.createdAt);
+                      return (
+                        <div key={s.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: 'rgba(239,68,68,0.04)', border: '1px solid rgba(239,68,68,0.1)' }}>
+                          <button onClick={() => { setFlipCat(null); setHomeEditStock({ ...s }); }}
+                            className="text-left flex-1 min-w-0" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+                            <p className="text-sm font-medium truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                            <p className="text-[11px]" style={{ color: '#fca5a5' }}>{age}d / {getFlipDays(s)}d</p>
+                          </button>
+                          <button onClick={() => { flipStock(s.id); }}
+                            className="touch px-3 py-1 text-xs font-semibold rounded-lg transition-all active:scale-95 shrink-0 ml-2"
+                            style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
+                            Flip
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <Field label="Or set date for all">
                 <Inp type="date" value={flipDate} onChange={e => setFlipDate(e.target.value)} />
               </Field>
               <div className="flex gap-2 mt-2">
@@ -2732,6 +2764,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
           );
         })()}
       </Modal>
+      <StockModal stock={homeEditStock} onClose={() => setHomeEditStock(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={() => {}} STOCK_CATS={STOCK_CATS} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} />
     </div>
   );
 }

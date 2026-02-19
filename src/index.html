@@ -551,6 +551,18 @@ function mergeCrosses(local, remote) {
   return merged;
 }
 
+// Track locally deleted IDs so realtime doesn't re-add them
+const _deletedIds = new Set();
+function markDeleted(id) { _deletedIds.add(id); setTimeout(() => _deletedIds.delete(id), 15000); }
+function isDeletedLocally(id) { return _deletedIds.has(id); }
+
+// Immediately delete from Supabase (don't wait for debounced push)
+function supabaseDeleteNow(table, id) {
+  const sb = getSb();
+  if (!sb) return;
+  sb.from(table).delete().eq('id', id).then(() => {});
+}
+
 function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
   const subRef = React.useRef(null);
   React.useEffect(() => {
@@ -559,6 +571,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
     const channel = sb.channel('db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stocks' }, payload => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          if (isDeletedLocally(payload.new.id)) return;
           const item = toCamel(payload.new, STOCK_FIELD_MAP);
           if (item.isGift === false) delete item.isGift;
           setStocks(prev => {
@@ -572,6 +585,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'crosses' }, payload => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          if (isDeletedLocally(payload.new.id)) return;
           const item = toCamel(payload.new, CROSS_FIELD_MAP);
           if (!item.collected) item.collected = [];
           if (!item.vials) item.vials = [];
@@ -1827,10 +1841,12 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
 
   function doDelete() {
     const backup = { ...cross };
+    markDeleted(cross.id);
+    supabaseDeleteNow('crosses', cross.id);
     setCrosses(p => p.filter(c => c.id !== cross.id));
     setDeleting(false);
     setDetailOpen(false);
-    toast.add('Cross deleted', () => setCrosses(p => [...p, backup]));
+    toast.add('Cross deleted', () => { _deletedIds.delete(backup.id); setCrosses(p => [...p, backup]); });
   }
 
   function setStatus(st) {
@@ -2762,9 +2778,11 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
 
   function doDelete() {
     const s = stocks.find(x => x.id === deleting);
+    markDeleted(deleting);
+    supabaseDeleteNow('stocks', deleting);
     setStocks(p => p.filter(x => x.id !== deleting));
     setDeleting(null);
-    if (s) toast.add(`Deleted "${s.name}"`, () => setStocks(p => [...p, s]));
+    if (s) toast.add(`Deleted "${s.name}"`, () => { _deletedIds.delete(s.id); setStocks(p => [...p, s]); });
   }
 
   // Multi-select
@@ -2800,8 +2818,9 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   function bulkDeleteConfirmed() {
     const ids = selected;
     const removed = stocks.filter(s => ids.has(s.id));
+    ids.forEach(id => { markDeleted(id); supabaseDeleteNow('stocks', id); });
     setStocks(p => p.filter(s => !ids.has(s.id)));
-    toast.add(`Deleted ${ids.size} stock${ids.size > 1 ? 's' : ''}`, () => setStocks(p => [...p, ...removed]));
+    toast.add(`Deleted ${ids.size} stock${ids.size > 1 ? 's' : ''}`, () => { removed.forEach(s => _deletedIds.delete(s.id)); setStocks(p => [...p, ...removed]); });
     setBulkDeleting(false);
     exitSelect();
   }

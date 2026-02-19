@@ -1790,10 +1790,12 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
         setVirginBank(prev => ({ ...prev, [cross.parentA]: (prev[cross.parentA] || 0) - needed }));
         ns = 'collecting progeny';
         toast.add(`Used ${needed} banked virgins → ${ns}`);
+        markEdited(cross.id);
         setCrosses(p => p.map(c => c.id === cross.id ? { ...c, status: ns } : c));
         return;
       }
     }
+    markEdited(cross.id);
     const extra = ns === 'waiting for progeny' ? { waitStartDate: today() }
       : ns === 'ripening' ? { ripeningStartDate: today() } : {};
     setCrosses(p => p.map(c => c.id === cross.id ? { ...c, status: ns, ...extra } : c));
@@ -1801,11 +1803,13 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
   }
 
   function quickLog(n) {
+    markEdited(cross.id);
     setCrosses(p => p.map(c => c.id !== cross.id ? c : { ...c, collected: [...(c.collected || []), { date: today(), count: n }] }));
     toast.add(`+${n} logged`);
   }
 
   function logVirgin(n) {
+    markEdited(cross.id);
     const newCount = vCollected + n;
     if (newCount >= vTarget) {
       setCrosses(p => p.map(c => c.id === cross.id ? { ...c, virginsCollected: newCount, status: 'waiting for progeny', waitStartDate: today() } : c));
@@ -1827,6 +1831,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
       vials: [],
       notes: `Re-vial of ${cl(cross, stocks)}`,
     };
+    markEdited(clone.id);
     setCrosses(p => [...p, clone]);
     toast.add('Re-vialed — new cross created');
   }
@@ -2058,8 +2063,10 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
             <Btn v="advance" onClick={advance} className="w-full">Advance → {(() => { let ns = nextSt(cross.status); if (ns === 'ripening' && !cd.o && !cd.c) ns = nextSt(ns); return ns; })()}</Btn>
           ) : (
             <Btn v="s" onClick={() => {
+              const newId = uid();
+              markEdited(newId);
               setCrosses(p => [...p, {
-                ...cross, id: uid(), status: 'set up', setupDate: today(),
+                ...cross, id: newId, status: 'set up', setupDate: today(),
                 collected: [], vials: [], retinalStartDate: '', notes: cross.notes ? `Repeat: ${cross.notes}` : 'Repeat',
                 manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
               }]);
@@ -2257,6 +2264,7 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
       owner: currentUser,
       ...(initialStatus === 'waiting for progeny' ? { waitStartDate: today() } : {}),
     };
+    markEdited(cross.id);
     setCrosses(p => [...p, cross]);
     toast.add(msg);
     onClose();
@@ -2416,6 +2424,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
       for (const p of promotions) {
         if (c.status === p.from && c[p.field] && -dFromNow(c[p.field]) >= p.days) {
           changed = true;
+          markEdited(c.id);
           toast.add(`${cl(c, stocks)} → ${p.to}`);
           return { ...c, status: p.to };
         }
@@ -2712,6 +2721,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
               <div className="flex gap-2 mt-2">
                 <Btn onClick={() => {
                   const ids = new Set(catStocks.map(s => s.id));
+                  ids.forEach(id => markEdited(id));
                   setStocks(p => p.map(s => ids.has(s.id) ? { ...s, lastFlipped: flipDate } : s));
                   toast.add(`${label} flipped on ${fmt(flipDate)}`);
                   setFlipCat(null);
@@ -2841,7 +2851,9 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       p.forEach(s => {
         if (selected.has(s.id)) {
           const maxCopy = Math.max(...p.filter(x => x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection')).map(x => x.copies || 1));
-          newStocks.push({ ...s, id: uid(), copies: maxCopy + 1, createdAt: today(), lastFlipped: today() });
+          const newId = uid();
+          markEdited(newId);
+          newStocks.push({ ...s, id: newId, copies: maxCopy + 1, createdAt: today(), lastFlipped: today() });
         }
       });
       return [...p, ...newStocks];
@@ -3121,6 +3133,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                 if (count === 0) return;
                 const newStocks = lines.map(name => {
                   const s = { id: uid(), name, genotype: '', category: massAddCat, location: massAddLoc, notes: '', variant: 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser, copies: 1 };
+                  markEdited(s.id);
                   const g = guessSource(name);
                   if (g) {
                     s.source = g.source;
@@ -3173,6 +3186,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                     {USERS.map(u => (
                       <button key={u} onClick={() => {
                         const ids = new Set(allInCat.map(s => s.id));
+                        ids.forEach(id => markEdited(id));
                         setStocks(p => p.map(s => ids.has(s.id) ? { ...s, maintainer: u } : s));
                         toast.add(`${u} assigned as maintainer for ${collectionDetail}`);
                         setCollectionDetail(null);
@@ -3218,6 +3232,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
               <div className="flex gap-2 mt-2">
                 <Btn onClick={() => {
                   const ids = new Set(catStocks.map(s => s.id));
+                  ids.forEach(id => markEdited(id));
                   setStocks(p => p.map(s => ids.has(s.id) ? { ...s, lastFlipped: flipDate } : s));
                   toast.add(`${label} flipped on ${fmt(flipDate)}`);
                   setFlipCat(null);
@@ -3622,6 +3637,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
         {!isNew && <Btn v="s" onClick={() => {
           const split = { ...f, id: uid(), name: f.name + ' (split)', maintainer: currentUser, createdAt: today(), lastFlipped: today() };
           delete split.notes;
+          markEdited(split.id);
           setStocks(p => [...p, split]);
           toast.add(`Split off "${split.name}"`);
           onClose();
@@ -4991,9 +5007,9 @@ function App() {
       <main className="flex-1 overflow-y-auto pb-28" style={{ position: 'relative', zIndex: 1 }}>
         <div className="max-w-6xl mx-auto px-6 py-6">
           {tab === 'home' && <HomeScreen stocks={stocks} setStocks={setStocks} crosses={crosses} setCrosses={setCrosses} toast={toast} onNewCross={() => setNewCrossOpen(true)} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} currentUser={currentUser} onTransfer={createTransfer} transfers={myTransfers} onAcceptTransfer={(t) => {
-            if (t.type === 'stock') setStocks(p => p.map(s => s.id === t.itemId ? { ...s, maintainer: currentUser } : s));
-            else if (t.type === 'cross') setCrosses(p => p.map(c => c.id === t.itemId ? { ...c, owner: currentUser } : c));
-            else if (t.type === 'collection') setStocks(p => p.map(s => (s.category || 'No Collection') === t.collection && s.maintainer === t.from ? { ...s, maintainer: currentUser } : s));
+            if (t.type === 'stock') { markEdited(t.itemId); setStocks(p => p.map(s => s.id === t.itemId ? { ...s, maintainer: currentUser } : s)); }
+            else if (t.type === 'cross') { markEdited(t.itemId); setCrosses(p => p.map(c => c.id === t.itemId ? { ...c, owner: currentUser } : c)); }
+            else if (t.type === 'collection') { stocks.filter(s => (s.category || 'No Collection') === t.collection && s.maintainer === t.from).forEach(s => markEdited(s.id)); setStocks(p => p.map(s => (s.category || 'No Collection') === t.collection && s.maintainer === t.from ? { ...s, maintainer: currentUser } : s)); }
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: 'accepted' } : x));
             toast.add(`Accepted transfer from ${t.from}`);
           }} onDeclineTransfer={(t) => {

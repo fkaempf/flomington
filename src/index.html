@@ -4442,7 +4442,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     // Scale sizes based on label dimensions
     const isLarge = spec.labelH > 30;
     const qrSize = isLarge ? 16 : 8;
-    const pad = isLarge ? '2mm 5mm 3.5mm 3mm' : '0.8mm 2mm 1.8mm 1mm';
+    const pad = isLarge ? '2mm 5mm 3.5mm 3mm' : '0.8mm 2mm 2.8mm 1mm';
     const gap = isLarge ? '2mm' : '1mm';
     const nameSize = isLarge ? '9pt' : '6.5pt';
     const genoSize = isLarge ? '6pt' : '4.5pt';
@@ -4525,12 +4525,10 @@ setTimeout(function(){ window.print(); }, 500);
             style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', color: showQR ? '#5eead4' : 'var(--text-3)', border: showQR ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showQR ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
             {showQR ? '✓ QR' : 'QR'}
           </div>
-          <select value={showGrid ? 'grid' : 'no'} onChange={e => setShowGrid(e.target.value === 'grid')}
-            className="compact px-2 py-1.5 font-semibold rounded-lg"
-            style={{ color: showGrid ? '#5eead4' : 'var(--text-3)', border: showGrid ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showGrid ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)', appearance: 'auto' }}>
-            <option value="grid">Grid</option>
-            <option value="no">No grid</option>
-          </select>
+          <div onClick={() => setShowGrid(!showGrid)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', color: showGrid ? '#5eead4' : 'var(--text-3)', border: showGrid ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showGrid ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
+            {showGrid ? '✓ Grid' : 'Grid'}
+          </div>
           <div className="compact flex items-center gap-1 font-semibold rounded-lg"
             style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', border: skipLabels > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: skipLabels > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)' }}>
             <span>Skip</span>

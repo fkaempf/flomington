@@ -4406,7 +4406,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     // Build unified label data
     const allLabels = [];
     stockItems.forEach(s => {
-      allLabels.push({ id: 's-' + s.id, name: s.name, line2: s.genotype || '', line3: '', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
+      allLabels.push({ id: 's-' + s.id, name: s.name, copies: s.copies || 1, line2: s.genotype || '', line3: '', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
     });
     crossItems.forEach(c => {
       const info = crossLabelText(c, stocks);
@@ -4428,7 +4428,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
         return `<div class="label">
           ${lb.qrUrl ? '<div class="label-qr" id="qr-' + lb.id + '"></div>' : ''}
           <div class="label-text">
-            <div class="label-name">${lb.name}</div>
+            <div class="label-name">${lb.name}${lb.copies > 1 ? ' <span class="label-copy">#' + lb.copies + '</span>' : ''}</div>
             ${lb.line2 ? '<div class="label-geno">' + lb.line2 + '</div>' : ''}
             ${lb.line3 ? '<div class="label-info">' + lb.line3 + '</div>' : ''}
           </div>
@@ -4480,6 +4480,7 @@ body { font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: ex
 .label-qr svg { display: block; width: ${qrSize}mm; height: ${qrSize}mm; }
 .label-text { flex: 1; min-width: 0; overflow: hidden; }
 .label-name { font-size: ${nameSize}; font-weight: bold; line-height: 1.2; word-break: break-word; }
+.label-copy { font-weight: normal; color: #aaa; }
 .label-geno { font-size: ${genoSize}; font-family: 'Courier New', monospace; line-height: 1.2; word-break: break-all; color: #444; margin-top: 0.5mm; }
 .label-info { font-size: ${infoSize}; color: #666; line-height: 1.2; margin-top: 0.3mm; }
 @media print {

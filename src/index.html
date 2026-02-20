@@ -4406,7 +4406,8 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     // Build unified label data
     const allLabels = [];
     stockItems.forEach(s => {
-      allLabels.push({ id: 's-' + s.id, name: s.name, copies: s.copies || 1, line2: s.genotype || '', line3: '', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
+      const hasSibling = stocks.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'));
+      allLabels.push({ id: 's-' + s.id, name: s.name, copies: hasSibling ? (s.copies || 1) : 0, line2: s.genotype || '', line3: '', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
     });
     crossItems.forEach(c => {
       const info = crossLabelText(c, stocks);
@@ -4428,7 +4429,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
         return `<div class="label">
           ${lb.qrUrl ? '<div class="label-qr" id="qr-' + lb.id + '"></div>' : ''}
           <div class="label-text">
-            <div class="label-name">${lb.name}${lb.copies > 1 ? ' <span class="label-copy">#' + lb.copies + '</span>' : ''}</div>
+            <div class="label-name">${lb.name}${lb.copies ? ' <span class="label-copy">#' + lb.copies + '</span>' : ''}</div>
             ${lb.line2 ? '<div class="label-geno">' + lb.line2 + '</div>' : ''}
             ${lb.line3 ? '<div class="label-info">' + lb.line3 + '</div>' : ''}
           </div>

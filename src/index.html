@@ -417,7 +417,7 @@ const STOCK_FIELD_MAP = {
   sourceId: 'source_id', flybaseId: 'flybase_id', janeliaLine: 'janelia_line',
   maintainer: 'maintainer', notes: 'notes', isGift: 'is_gift',
   giftFrom: 'gift_from', createdAt: 'created_at', lastFlipped: 'last_flipped',
-  copies: 'copies',
+  copies: 'copies', vcs: 'vcs',
 };
 
 const CROSS_FIELD_MAP = {
@@ -487,6 +487,7 @@ async function supabasePull() {
   const stocks = (stocksRes.data || []).map(row => {
     const s = toCamel(row, STOCK_FIELD_MAP);
     if (s.isGift === false) delete s.isGift;
+    if (typeof s.vcs === 'string') try { s.vcs = JSON.parse(s.vcs); } catch { s.vcs = null; }
     return s;
   });
   const crosses = (crossesRes.data || []).map(row => {
@@ -685,6 +686,162 @@ function flybaseUrl(fbId) {
 }
 const STOCK_VARIANTS = ['stock', 'expanded'];
 
+/* ========== VCS (Virgin Collection Stock) ========== */
+const VCS_DEFAULTS = {
+  '18_2': { eveningClear: '17:30', morningCollect: '09:30', middayCollect: null, afternoonCollect: '17:00' },
+  '18_3': { eveningClear: '17:30', morningCollect: '09:30', middayCollect: '14:00', afternoonCollect: '17:00' },
+  '25_2': { eveningClear: '18:00', morningCollect: '08:00', middayCollect: null, afternoonCollect: '14:30' },
+  '25_3': { eveningClear: '18:00', morningCollect: '08:00', middayCollect: '12:00', afternoonCollect: '16:30' },
+};
+function vcsKey(o18, n) { return (o18 ? '18' : '25') + '_' + n; }
+function getVirginWindowH(o18) { return o18 ? 16 : 8; }
+function makeVcs(o18, cpd, sched) {
+  return { enabled: true, overnightAt18: !!o18, collectionsPerDay: cpd, schedule: { ...sched },
+    lastClearTime: null, lastClearTemp: o18 ? '18' : '25', virginDeadline: null, todayActions: [], createdAt: new Date().toISOString() };
+}
+
+// Parse "HH:MM" to minutes since midnight
+function parseHHMM(s) { if (!s) return null; const [h, m] = s.split(':').map(Number); return h * 60 + m; }
+function fmtHHMM(mins) { const h = Math.floor(((mins % 1440) + 1440) % 1440 / 60); const m = ((mins % 1440) + 1440) % 1440 % 60; return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); }
+
+// Format ms duration as "1h 20m" or "35m"
+function fmtDur(ms) {
+  const neg = ms < 0; const a = Math.abs(ms);
+  const m = Math.round(a / 60000);
+  if (m < 60) return (neg ? '-' : '') + m + 'm';
+  const h = Math.floor(m / 60); const rm = m % 60;
+  return (neg ? '-' : '') + h + 'h' + (rm ? ' ' + rm + 'm' : '');
+}
+
+// Compute virgin deadline from a clear timestamp
+function computeDeadline(clearIso, o18) {
+  if (!clearIso) return null;
+  return new Date(new Date(clearIso).getTime() + getVirginWindowH(o18) * 3600000).toISOString();
+}
+
+// Core dynamic engine: compute next actions for a VCS stock
+function computeNextActions(vcs, now) {
+  if (!vcs?.enabled) return [];
+  now = now || new Date();
+  const { overnightAt18, collectionsPerDay, schedule, lastClearTime, todayActions } = vcs;
+  const windowMs = getVirginWindowH(overnightAt18) * 3600000;
+
+  // Build the ordered action sequence for one cycle
+  const isMorningCollect = overnightAt18; // 18C overnight → morning is a collect; otherwise clear+discard
+  const actions = [];
+  actions.push({ key: 'evening', type: 'clear', label: overnightAt18 ? 'Clear → 18°C' : 'Clear', scheduled: schedule.eveningClear });
+  actions.push({ key: 'morning', type: isMorningCollect ? 'collect' : 'clear_discard',
+    label: isMorningCollect ? 'Morning collect' : 'Morning clear + discard', scheduled: schedule.morningCollect });
+  if (collectionsPerDay === 3 && schedule.middayCollect)
+    actions.push({ key: 'midday', type: 'collect', label: 'Midday collect', scheduled: schedule.middayCollect });
+  actions.push({ key: 'afternoon', type: 'collect_clear', label: 'Afternoon collect + clear', scheduled: schedule.afternoonCollect });
+
+  // Determine what's already done today
+  const doneKeys = new Set();
+  (todayActions || []).forEach(a => { if (a.key) doneKeys.add(a.key); });
+
+  // Compute deadline from last clear
+  const deadline = lastClearTime ? new Date(lastClearTime).getTime() + windowMs : null;
+
+  // Compute suggested times based on last clear shift
+  const result = [];
+  let lastActionTime = null; // track shift propagation
+
+  for (const act of actions) {
+    if (doneKeys.has(act.key)) continue; // already done
+
+    const schedMins = parseHHMM(act.scheduled);
+    if (schedMins === null) continue;
+
+    // Build a suggested time for today
+    const todayBase = new Date(now);
+    todayBase.setHours(0, 0, 0, 0);
+    let suggestedMs = todayBase.getTime() + schedMins * 60000;
+
+    // Dynamic shift: if we have a lastClearTime, shift proportionally
+    if (lastClearTime) {
+      const clearMs = new Date(lastClearTime).getTime();
+      const eveningSchedMins = parseHHMM(schedule.eveningClear);
+      if (eveningSchedMins !== null) {
+        // What time was evening clear scheduled for?
+        let schedClearMs;
+        // If clear was yesterday evening (before midnight relative to now)
+        const yesterdayBase = new Date(todayBase.getTime() - 86400000);
+        const todayClearMs = todayBase.getTime() + eveningSchedMins * 60000;
+        const yesterdayClearMs = yesterdayBase.getTime() + eveningSchedMins * 60000;
+
+        // Determine if the last clear corresponds to yesterday's or today's evening slot
+        if (act.key === 'evening') {
+          // Evening clear is today — no shift from itself
+          schedClearMs = todayClearMs;
+        } else {
+          // Morning/midday/afternoon actions reference yesterday's evening clear
+          schedClearMs = yesterdayClearMs;
+        }
+
+        const shiftMs = clearMs - schedClearMs;
+        // For collect actions within this window, shift by the same offset
+        if (act.key !== 'evening' && Math.abs(shiftMs) < 12 * 3600000) {
+          suggestedMs += shiftMs;
+        }
+      }
+
+      // Propagate shift from early/late intermediate actions
+      if (lastActionTime && act.type === 'collect') {
+        // Nothing extra — the clear-based shift is sufficient
+      }
+    }
+
+    const suggestedDate = new Date(suggestedMs);
+    const nowMs = now.getTime();
+    const isOverdue = nowMs > suggestedMs + 30 * 60000;
+    const isPastDeadline = deadline ? nowMs > deadline : false;
+
+    result.push({
+      ...act,
+      suggestedTime: suggestedDate.toISOString(),
+      suggestedMs,
+      isOverdue,
+      isPastDeadline,
+      deadline: deadline ? new Date(deadline).toISOString() : null,
+      deadlineMs: deadline,
+      timeUntilMs: suggestedMs - nowMs,
+    });
+  }
+
+  return result;
+}
+
+// Status color: green/yellow/red
+function getVcsStatus(vcs, now) {
+  if (!vcs?.enabled) return 'none';
+  now = now || new Date();
+  const actions = computeNextActions(vcs, now);
+  if (!actions.length) return 'green';
+  const next = actions[0];
+  if (next.isPastDeadline) return 'red';
+  if (next.isOverdue) return 'red';
+  if (next.timeUntilMs < 30 * 60000) return 'yellow';
+  return 'green';
+}
+
+// Progress through virgin window (0-1)
+function vcsWindowProgress(vcs, now) {
+  if (!vcs?.lastClearTime) return 0;
+  now = now || new Date();
+  const clearMs = new Date(vcs.lastClearTime).getTime();
+  const windowMs = getVirginWindowH(vcs.overnightAt18) * 3600000;
+  const elapsed = now.getTime() - clearMs;
+  return Math.max(0, Math.min(1, elapsed / windowMs));
+}
+
+// Format time as "HH:MM"
+function fmtTime(iso) {
+  if (!iso) return '--:--';
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
 // Flip schedules: expanded always 25°C → 21d (3wk); stock varies by temp
 function getFlipDays(s) {
   if ((s.variant || 'stock') === 'expanded') return 21;
@@ -827,13 +984,21 @@ function makeDemoData() {
       createdAt: addDays(t, -60), lastFlipped: addDays(t, -10),
       notes: 'Wild type reference strain — expanded, overdue for flip',
       variant: 'expanded', category: 'Lab Stocks', maintainer: 'Flo',
-      source: 'Bloomington', sourceId: '25211', flybaseId: 'FBst0025211' },
+      source: 'Bloomington', sourceId: '25211', flybaseId: 'FBst0025211',
+      vcs: { enabled: true, overnightAt18: true, collectionsPerDay: 2,
+        schedule: { eveningClear: '17:30', morningCollect: '09:30', middayCollect: null, afternoonCollect: '17:00' },
+        lastClearTime: new Date(new Date().setHours(17, 30, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '18', virginDeadline: null, todayActions: [], createdAt: addDays(t, -14) } },
     // s2: Expanded, 25room, No Collection, recently flipped (3d of 7d → 43%)
     //     Bella, no source
     { id: 's2', name: 'w1118', genotype: 'w[1118]', location: '25room',
       createdAt: addDays(t, -45), lastFlipped: addDays(t, -3),
       notes: 'White-eyed host — expanded, recently flipped',
-      variant: 'expanded', category: 'No Collection', maintainer: 'Bella' },
+      variant: 'expanded', category: 'No Collection', maintainer: 'Bella',
+      vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 3,
+        schedule: { eveningClear: '18:00', morningCollect: '08:00', middayCollect: '12:00', afternoonCollect: '16:30' },
+        lastClearTime: new Date(new Date().setHours(18, 0, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '25', virginDeadline: null, todayActions: [], createdAt: addDays(t, -7) } },
     // s3: Expanded, RT, Flo Stocks 2, near flip (6d of 7d → 86%)
     //     Catherine, Kyoto source
     { id: 's3', name: 'Canton-S', genotype: '+', location: 'RT',
@@ -1993,6 +2158,17 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
         {cross.status === 'collecting virgins' && (
           <div className="mb-5">
             <p className="section-header">Virgin Collection</p>
+            {(() => {
+              const parentStock = stocks.find(s => s.id === cross.parentA);
+              if (!parentStock?.vcs?.enabled) return null;
+              const nextActs = computeNextActions(parentStock.vcs, new Date());
+              const nextA = nextActs[0];
+              return (
+                <p className="text-[10px] mb-2 px-2 py-1 rounded-lg inline-block" style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa' }}>
+                  🔬 VCS from {parentStock.name}{nextA ? ` — Next: ${fmtTime(nextA.suggestedTime)}` : ''}
+                </p>
+              );
+            })()}
             <div className="flex items-center gap-4 mb-3">
               <CircleProgress value={vCollected} max={vTarget} size={56} stroke={4} countUp />
               <div>
@@ -2588,6 +2764,146 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
           </div>
         ) : null}
       </div>
+
+      {/* VCS Dashboard */}
+      {(() => {
+        const vcsStocks = stocks.filter(s => s.vcs?.enabled && s.maintainer === currentUser && !stockTags(s).includes('Dead'));
+        if (!vcsStocks.length) return null;
+        const now = new Date();
+        // Sort by urgency: red first, then yellow, then green, then by next action time
+        const sorted = [...vcsStocks].sort((a, b) => {
+          const sa = getVcsStatus(a.vcs, now), sb = getVcsStatus(b.vcs, now);
+          const order = { red: 0, yellow: 1, green: 2 };
+          if (order[sa] !== order[sb]) return order[sa] - order[sb];
+          const na = computeNextActions(a.vcs, now), nb = computeNextActions(b.vcs, now);
+          return (na[0]?.suggestedMs || Infinity) - (nb[0]?.suggestedMs || Infinity);
+        });
+        return (
+          <div className="mb-6">
+            <p className="section-header">🔬 Virgin Collections</p>
+            <div className="space-y-3">
+              {sorted.map(s => {
+                const v = s.vcs;
+                const status = getVcsStatus(v, now);
+                const actions = computeNextActions(v, now);
+                const next = actions[0];
+                const progress = vcsWindowProgress(v, now);
+                const deadline = v.lastClearTime ? computeDeadline(v.lastClearTime, v.overnightAt18) : null;
+                const doneCount = (v.todayActions || []).filter(a => a.type === 'collect').length;
+                const totalCollects = v.collectionsPerDay;
+
+                const borderColor = status === 'red' ? 'rgba(239,68,68,0.3)' : status === 'yellow' ? 'rgba(234,179,8,0.3)' : 'rgba(94,234,212,0.2)';
+                const dotColor = status === 'red' ? '#ef4444' : status === 'yellow' ? '#eab308' : '#5eead4';
+
+                function logAction(type, key) {
+                  const action = { type, key, time: new Date().toISOString(), scheduled: next?.scheduled || '' };
+                  const newActions = [...(v.todayActions || []), action];
+                  let newVcs = { ...v, todayActions: newActions };
+                  if (type === 'clear' || type === 'clear_discard') {
+                    newVcs.lastClearTime = action.time;
+                    newVcs.lastClearTemp = v.overnightAt18 ? '18' : '25';
+                    newVcs.virginDeadline = computeDeadline(action.time, v.overnightAt18);
+                    newVcs.todayActions = [action]; // Reset for new window
+                  }
+                  markEdited(s.id);
+                  setStocks(p => p.map(st => st.id === s.id ? { ...st, vcs: newVcs } : st));
+                  const msgs = { collect: 'Collected', clear: v.overnightAt18 ? 'Cleared → 18°C' : 'Cleared', clear_discard: 'Cleared & discarded' };
+                  toast.add(`${s.name}: ${msgs[type] || 'Done'}`);
+                }
+
+                const isPastDeadline = next?.isPastDeadline || (deadline && now > new Date(deadline));
+
+                return (
+                  <div key={s.id} className="card p-4" style={{ border: `1px solid ${borderColor}` }}>
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ background: dotColor }} />
+                        <p className="text-sm font-bold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                      </div>
+                      <span className="text-[10px] shrink-0 ml-2" style={{ color: 'var(--text-3)' }}>{v.overnightAt18 ? '18°C' : '25°C'} · {v.collectionsPerDay}×</span>
+                    </div>
+
+                    {s.genotype && <p className="text-[10px] mb-2 truncate" style={{ color: 'var(--text-3)' }}>{s.genotype}</p>}
+
+                    {/* Progress bar */}
+                    {v.lastClearTime && (
+                      <div className="mb-2">
+                        <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+                          <div className="h-full rounded-full transition-all" style={{
+                            width: `${Math.min(100, progress * 100)}%`,
+                            background: progress > 0.9 ? '#ef4444' : progress > 0.7 ? '#eab308' : '#5eead4'
+                          }} />
+                        </div>
+                        <div className="flex justify-between mt-1">
+                          <span className="text-[10px]" style={{ color: 'var(--text-3)' }}>Cleared {fmtTime(v.lastClearTime)}</span>
+                          <span className="text-[10px]" style={{ color: progress > 0.9 ? '#ef4444' : 'var(--text-3)' }}>Deadline {deadline ? fmtTime(deadline) : '--'}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Status message */}
+                    {isPastDeadline ? (
+                      <p className="text-xs font-semibold mb-2" style={{ color: '#ef4444' }}>❌ Virgin deadline PASSED — clear & discard recommended</p>
+                    ) : next ? (
+                      <div className="mb-2">
+                        <p className="text-xs" style={{ color: next.isOverdue ? '#ef4444' : next.timeUntilMs < 30 * 60000 ? '#eab308' : 'var(--text-2)' }}>
+                          {next.isOverdue ? '⚠️ OVERDUE: ' : 'Next: '}{next.label} — {fmtTime(next.suggestedTime)} ({next.timeUntilMs > 0 ? 'in ' + fmtDur(next.timeUntilMs) : fmtDur(Math.abs(next.timeUntilMs)) + ' ago'})
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs mb-2" style={{ color: '#5eead4' }}>All actions done for this window</p>
+                    )}
+
+                    <p className="text-[10px] mb-3" style={{ color: 'var(--text-3)' }}>Today: {doneCount}/{totalCollects} collections</p>
+
+                    {/* Action buttons */}
+                    <div className="flex gap-2">
+                      {isPastDeadline ? (
+                        <button onClick={() => logAction('clear_discard', next?.key || 'evening')}
+                          className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear & Discard ↻</button>
+                      ) : next?.type === 'collect' || next?.type === 'collect_clear' ? (
+                        <>
+                          <button onClick={() => {
+                            logAction(next.type === 'collect_clear' ? 'clear' : 'collect', next.key);
+                            if (next.type === 'collect_clear' || next.type === 'collect') {
+                              // Prompt for virgin bank logging
+                              const count = prompt(`Log virgins to bank for ${s.name}? (Enter count or cancel)`);
+                              if (count && parseInt(count) > 0) {
+                                const n = parseInt(count);
+                                setVirginBank(prev => ({ ...prev, [s.id]: (prev[s.id] || 0) + n }));
+                                toast.add(`+${n} virgins banked for ${s.name}`);
+                              }
+                            }
+                          }}
+                            className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' }}>
+                            {next.type === 'collect_clear' ? 'Collect + Clear ✓' : 'Mark Collected ✓'}
+                          </button>
+                          <button onClick={() => logAction('clear', next.key)}
+                            className="px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Clear Instead ↻</button>
+                        </>
+                      ) : next?.type === 'clear_discard' ? (
+                        <>
+                          <button onClick={() => logAction('clear_discard', next.key)}
+                            className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear + Discard ⚠️</button>
+                        </>
+                      ) : next?.type === 'clear' ? (
+                        <button onClick={() => logAction('clear', next.key)}
+                          className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
+                          {v.overnightAt18 ? 'Mark Cleared → 18°C' : 'Mark Cleared'}</button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Active Tasks */}
       {activeTasks.length > 0 && (
@@ -3475,6 +3791,10 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
   function save() {
     if (!f.name?.trim()) { setNameError('Name is required'); return; }
     const saving = { ...f };
+    // Auto-disable VCS if stock is dead or no longer expanded
+    if (saving.vcs?.enabled && (stockTags(saving).includes('Dead') || (saving.variant || 'stock') !== 'expanded')) {
+      saving.vcs = null;
+    }
     // Auto-inherit collection maintainer when stock has no maintainer
     if (saving.category && saving.category !== 'No Collection') {
       const catStocks = stocks.filter(s => s.id !== saving.id && (s.category || 'No Collection') === saving.category);
@@ -3669,6 +3989,136 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
       ) : (
         <Field label="Notes"><Txt value={f.notes || ''} onChange={e => setF({ ...f, notes: e.target.value })} rows={2} /></Field>
       )}
+      {/* VCS Setup */}
+      {!isNew && (f.variant || 'stock') === 'expanded' && (() => {
+        const vcsActive = f.vcs?.enabled;
+        const [vcsStep, setVcsStep] = React.useState(0); // 0=closed, 1=overnight, 2=collections, 3=schedule
+        const [vcsO18, setVcsO18] = React.useState(true);
+        const [vcsCpd, setVcsCpd] = React.useState(2);
+        const [vcsSched, setVcsSched] = React.useState(null);
+        const [confirmDisable, setConfirmDisable] = React.useState(false);
+
+        React.useEffect(() => { if (vcsStep === 3 && !vcsSched) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsStep]);
+        React.useEffect(() => { if (vcsStep === 3) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsO18, vcsCpd]);
+
+        if (confirmDisable) return (
+          <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
+            <p className="text-sm font-semibold mb-2" style={{ color: '#fca5a5' }}>Disable Virgin Collection?</p>
+            <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Stock will remain expanded with normal flip schedule.</p>
+            <div className="flex gap-2">
+              <button onClick={() => { setF({ ...f, vcs: null }); setConfirmDisable(false); toast.add('VCS disabled'); }}
+                className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg" style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Yes, disable</button>
+              <button onClick={() => setConfirmDisable(false)}
+                className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg" style={{ background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>Cancel</button>
+            </div>
+          </div>
+        );
+
+        if (vcsActive && vcsStep === 0) return (
+          <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span style={{ color: '#a78bfa' }}>🔬</span>
+                <p className="text-xs font-semibold" style={{ color: '#a78bfa' }}>VCS Active</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px]" style={{ color: 'var(--text-3)' }}>{f.vcs.overnightAt18 ? '18°C' : '25°C'} · {f.vcs.collectionsPerDay}×/day</span>
+                <button onClick={() => setConfirmDisable(true)} className="px-2 py-1 text-[10px] rounded-lg" style={{ color: '#fca5a5', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.1)' }}>Stop</button>
+              </div>
+            </div>
+          </div>
+        );
+
+        if (vcsStep === 0) return (
+          <button onClick={() => setVcsStep(1)} className="w-full mb-4 px-4 py-3 text-sm font-semibold rounded-xl transition-all active:scale-[0.98] cursor-pointer"
+            style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>
+            🔬 Enable Virgin Collection
+          </button>
+        );
+
+        return (
+          <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+            <p className="text-xs font-semibold mb-3" style={{ color: '#a78bfa' }}>VCS Setup — Step {vcsStep}/3</p>
+
+            {vcsStep >= 1 && (
+              <div className="mb-3">
+                <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Overnight temperature?</p>
+                <div className="grid grid-cols-2 gap-2 mb-1">
+                  <div onClick={() => setVcsO18(true)} className={`loc-card cursor-pointer ${vcsO18 ? 'selected' : ''}`}>
+                    <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>18°C overnight</p>
+                    <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>16h virgin window</p>
+                  </div>
+                  <div onClick={() => setVcsO18(false)} className={`loc-card cursor-pointer ${!vcsO18 ? 'selected' : ''}`}>
+                    <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>25°C (no move)</p>
+                    <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>8h virgin window</p>
+                  </div>
+                </div>
+                <p className="text-[10px] mb-2" style={{ color: 'var(--text-3)' }}>{vcsO18 ? '18°C extends the virgin window to ~16h and captures the dawn eclosion peak.' : 'Morning eclosers will have mated — must clear & discard first.'}</p>
+                {vcsStep === 1 && <button onClick={() => setVcsStep(2)} className="w-full px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>Next →</button>}
+              </div>
+            )}
+
+            {vcsStep >= 2 && (
+              <div className="mb-3">
+                <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Collections per day?</p>
+                <div className="grid grid-cols-2 gap-2 mb-1">
+                  <div onClick={() => setVcsCpd(2)} className={`loc-card cursor-pointer ${vcsCpd === 2 ? 'selected' : ''}`}>
+                    <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>2× daily</p>
+                    <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>Recommended</p>
+                  </div>
+                  <div onClick={() => setVcsCpd(3)} className={`loc-card cursor-pointer ${vcsCpd === 3 ? 'selected' : ''}`}>
+                    <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>3× daily</p>
+                    <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>Rare genotypes</p>
+                  </div>
+                </div>
+                {vcsStep === 2 && <button onClick={() => setVcsStep(3)} className="w-full px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>Next →</button>}
+              </div>
+            )}
+
+            {vcsStep === 3 && vcsSched && (
+              <div>
+                <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Schedule</p>
+                <div className="space-y-2 mb-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs" style={{ color: 'var(--text-2)' }}>Evening clear{vcsO18 ? ' → 18°C' : ''}</span>
+                    <input type="time" value={vcsSched.eveningClear} onChange={e => setVcsSched({ ...vcsSched, eveningClear: e.target.value })}
+                      className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs" style={{ color: vcsO18 ? '#5eead4' : '#fca5a5' }}>{vcsO18 ? 'Morning collect' : 'Morning clear + discard ⚠️'}</span>
+                    <input type="time" value={vcsSched.morningCollect} onChange={e => setVcsSched({ ...vcsSched, morningCollect: e.target.value })}
+                      className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+                  </div>
+                  {vcsCpd === 3 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs" style={{ color: '#5eead4' }}>Midday collect</span>
+                      <input type="time" value={vcsSched.middayCollect || ''} onChange={e => setVcsSched({ ...vcsSched, middayCollect: e.target.value })}
+                        className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs" style={{ color: '#5eead4' }}>Afternoon collect + clear</span>
+                    <input type="time" value={vcsSched.afternoonCollect} onChange={e => setVcsSched({ ...vcsSched, afternoonCollect: e.target.value })}
+                      className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+                  </div>
+                </div>
+                {!vcsO18 && <p className="text-[10px] mb-3 p-2 rounded-lg" style={{ background: 'rgba(239,68,68,0.06)', color: '#fca5a5' }}>⚠️ Without 18°C overnight, morning flies must be discarded — they are NOT reliable virgins.</p>}
+                <div className="flex gap-2">
+                  <button onClick={() => {
+                    const newVcs = makeVcs(vcsO18, vcsCpd, vcsSched);
+                    setF({ ...f, vcs: newVcs });
+                    setVcsStep(0);
+                    toast.add('VCS enabled');
+                    if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission();
+                  }} className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.25)' }}>Start Virgin Collection</button>
+                  <button onClick={() => setVcsStep(0)} className="px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {!isNew && virginBank && setVirginBank && (
         <div className="mb-4 p-3 rounded-xl" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between mb-2">
@@ -4209,6 +4659,42 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       </div>
 
       <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>VCS Notifications</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Alerts for virgin collection schedules.</p>
+        {(() => {
+          const [vn, setVn] = useLS('flo-vcs-notify', true);
+          const [vr, setVr] = useLS('flo-vcs-remind-min', 15);
+          const [vo, setVo] = useLS('flo-vcs-overdue-min', 30);
+          return (
+            <div className="space-y-3">
+              <button onClick={() => {
+                if (!vn) {
+                  if (!('Notification' in window)) { toast.add('Notifications not supported'); return; }
+                  if (Notification.permission === 'denied') { toast.add('Notifications blocked'); return; }
+                  if (Notification.permission === 'default') { Notification.requestPermission().then(p => { if (p === 'granted') { setVn(true); toast.add('VCS notifications enabled'); } }); }
+                  else { setVn(true); toast.add('VCS notifications enabled'); }
+                } else { setVn(false); toast.add('VCS notifications disabled'); }
+              }}
+                className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-[0.97]"
+                style={vn ? { background: 'rgba(34,197,94,0.1)', color: '#86efac', border: '1px solid rgba(34,197,94,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
+                {vn ? 'VCS Notifications Enabled' : 'Enable VCS Notifications'}
+              </button>
+              {vn && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Remind before (min)">
+                    <Inp type="number" min="1" max="60" value={vr} onChange={e => setVr(Math.max(1, parseInt(e.target.value) || 15))} />
+                  </Field>
+                  <Field label="Overdue after (min)">
+                    <Inp type="number" min="5" max="120" value={vo} onChange={e => setVo(Math.max(5, parseInt(e.target.value) || 30))} />
+                  </Field>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+
+      <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Calendar Export</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>All cross milestones as .ics file.</p>
         <Btn v="s" onClick={exportAllICS} className="w-full">Export All (.ics)</Btn>
@@ -4652,7 +5138,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     const allLabels = [];
     stockItems.forEach(s => {
       const hasSibling = stocks.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'));
-      allLabels.push({ id: 's-' + s.id, name: s.name, copies: hasSibling ? (s.copies || 1) : 0, line2: s.genotype || '', line3: '', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
+      allLabels.push({ id: 's-' + s.id, name: s.name + (s.vcs?.enabled ? ' [VCS]' : ''), copies: hasSibling ? (s.copies || 1) : 0, line2: s.genotype || '', line3: '', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
     });
     crossItems.forEach(c => {
       const info = crossLabelText(c, stocks);
@@ -5088,7 +5574,14 @@ function App() {
     hasPulled.current = true;
     setSyncStatus('Syncing...');
     supabasePull().then(remote => {
-      if (remote.stocks) setStocks(remote.stocks);
+      if (remote.stocks) setStocks(prev => {
+        // Preserve local-only fields (like vcs) that don't exist in Supabase yet
+        const localMap = new Map(prev.map(s => [s.id, s]));
+        return remote.stocks.map(rs => {
+          const local = localMap.get(rs.id);
+          return local?.vcs ? { ...rs, vcs: local.vcs } : rs;
+        });
+      });
       if (remote.crosses) setCrosses(remote.crosses);
       if (remote.pins && remote.pins.length > 0) {
         let pinSynced = false;
@@ -5247,6 +5740,56 @@ function App() {
     check();
     return () => clearInterval(interval);
   }, [notifyVirgins, crosses, currentUser]);
+
+  // VCS notifications — dynamic schedule-based
+  const [vcsNotify, setVcsNotify] = useLS('flo-vcs-notify', true);
+  const [vcsRemindMin, setVcsRemindMin] = useLS('flo-vcs-remind-min', 15);
+  const [vcsOverdueMin, setVcsOverdueMin] = useLS('flo-vcs-overdue-min', 30);
+
+  useEffect(() => {
+    if (!vcsNotify || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const fired = new Set();
+
+    function checkVcs() {
+      const now = new Date();
+      const vcsStocks = stocks.filter(s => s.vcs?.enabled && s.maintainer === currentUser && !stockTags(s).includes('Dead'));
+      vcsStocks.forEach(s => {
+        const actions = computeNextActions(s.vcs, now);
+        const next = actions[0];
+        if (!next) return;
+
+        const prefix = `vcs-${s.id}-${next.key}-${today()}`;
+
+        // Reminder N min before
+        if (next.timeUntilMs > 0 && next.timeUntilMs <= vcsRemindMin * 60000) {
+          const k = prefix + '-remind';
+          if (!fired.has(k)) { fired.add(k); new Notification(`🔬 ${s.name}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
+        }
+        // At time
+        if (next.timeUntilMs <= 0 && next.timeUntilMs > -60000) {
+          const k = prefix + '-now';
+          if (!fired.has(k)) { fired.add(k); new Notification(`🔬 ${s.name}`, { body: `${next.label} NOW`, tag: k }); }
+        }
+        // Overdue
+        if (next.timeUntilMs < -(vcsOverdueMin * 60000)) {
+          const k = prefix + '-overdue';
+          if (!fired.has(k)) { fired.add(k); new Notification(`⚠️ ${s.name}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
+        }
+        // Deadline warning (30min before)
+        if (next.deadlineMs) {
+          const untilDeadline = next.deadlineMs - now.getTime();
+          if (untilDeadline > 0 && untilDeadline <= 30 * 60000) {
+            const k = `vcs-${s.id}-deadline-${today()}`;
+            if (!fired.has(k)) { fired.add(k); new Notification(`⚠️ ${s.name}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
+          }
+        }
+      });
+    }
+
+    const iv = setInterval(checkVcs, 60000);
+    checkVcs();
+    return () => clearInterval(iv);
+  }, [vcsNotify, stocks, currentUser, vcsRemindMin, vcsOverdueMin]);
 
   const myTransfers = transfers.filter(t => t.to === currentUser && t.status === 'pending');
   const sentResolved = transfers.filter(t => t.from === currentUser && (t.status === 'accepted' || t.status === 'declined') && !t.seen);

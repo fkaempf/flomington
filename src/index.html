@@ -727,7 +727,7 @@ function computeNextActions(vcs, now) {
   const windowMs = getVirginWindowH(overnightAt18) * 3600000;
 
   // Build the ordered action sequence for one cycle
-  const isMorningCollect = overnightAt18; // 18C overnight → morning is a collect; otherwise clear+discard
+  const isMorningCollect = overnightAt18;
   const actions = [];
   actions.push({ key: 'evening', type: 'clear', label: overnightAt18 ? 'Clear → 18°C' : 'Clear', scheduled: schedule.eveningClear });
   actions.push({ key: 'morning', type: isMorningCollect ? 'collect' : 'clear_discard',
@@ -736,77 +736,59 @@ function computeNextActions(vcs, now) {
     actions.push({ key: 'midday', type: 'collect', label: 'Midday collect', scheduled: schedule.middayCollect });
   actions.push({ key: 'afternoon', type: 'collect_clear', label: 'Afternoon collect + clear', scheduled: schedule.afternoonCollect });
 
-  // Determine what's already done today
+  // Only count actions from the current window (since last clear)
   const doneKeys = new Set();
-  (todayActions || []).forEach(a => { if (a.key) doneKeys.add(a.key); });
+  const clearMs = lastClearTime ? new Date(lastClearTime).getTime() : 0;
+  (todayActions || []).forEach(a => {
+    if (!a.key) return;
+    // Only count if the action was logged after the last clear
+    const actionMs = a.time ? new Date(a.time).getTime() : 0;
+    if (actionMs >= clearMs) doneKeys.add(a.key);
+  });
 
   // Compute deadline from last clear
-  const deadline = lastClearTime ? new Date(lastClearTime).getTime() + windowMs : null;
+  const deadline = lastClearTime ? clearMs + windowMs : null;
+  const nowMs = now.getTime();
 
   // Compute suggested times based on last clear shift
-  const result = [];
-  let lastActionTime = null; // track shift propagation
+  const todayBase = new Date(now); todayBase.setHours(0, 0, 0, 0);
+  const eveningSchedMins = parseHHMM(schedule.eveningClear);
 
+  const result = [];
   for (const act of actions) {
-    if (doneKeys.has(act.key)) continue; // already done
+    if (doneKeys.has(act.key)) continue;
 
     const schedMins = parseHHMM(act.scheduled);
     if (schedMins === null) continue;
 
-    // Build a suggested time for today
-    const todayBase = new Date(now);
-    todayBase.setHours(0, 0, 0, 0);
     let suggestedMs = todayBase.getTime() + schedMins * 60000;
 
-    // Dynamic shift: if we have a lastClearTime, shift proportionally
-    if (lastClearTime) {
-      const clearMs = new Date(lastClearTime).getTime();
-      const eveningSchedMins = parseHHMM(schedule.eveningClear);
-      if (eveningSchedMins !== null) {
-        // What time was evening clear scheduled for?
-        let schedClearMs;
-        // If clear was yesterday evening (before midnight relative to now)
-        const yesterdayBase = new Date(todayBase.getTime() - 86400000);
-        const todayClearMs = todayBase.getTime() + eveningSchedMins * 60000;
-        const yesterdayClearMs = yesterdayBase.getTime() + eveningSchedMins * 60000;
-
-        // Determine if the last clear corresponds to yesterday's or today's evening slot
-        if (act.key === 'evening') {
-          // Evening clear is today — no shift from itself
-          schedClearMs = todayClearMs;
-        } else {
-          // Morning/midday/afternoon actions reference yesterday's evening clear
-          schedClearMs = yesterdayClearMs;
-        }
-
-        const shiftMs = clearMs - schedClearMs;
-        // For collect actions within this window, shift by the same offset
-        if (act.key !== 'evening' && Math.abs(shiftMs) < 12 * 3600000) {
-          suggestedMs += shiftMs;
-        }
-      }
-
-      // Propagate shift from early/late intermediate actions
-      if (lastActionTime && act.type === 'collect') {
-        // Nothing extra — the clear-based shift is sufficient
-      }
+    // Dynamic shift: offset all actions by how much the actual clear deviated from scheduled
+    if (lastClearTime && eveningSchedMins !== null && act.key !== 'evening') {
+      const yesterdayClearMs = todayBase.getTime() - 86400000 + eveningSchedMins * 60000;
+      const todayClearMs = todayBase.getTime() + eveningSchedMins * 60000;
+      // Pick whichever scheduled clear is closest to actual clear
+      const schedClearMs = Math.abs(clearMs - yesterdayClearMs) < Math.abs(clearMs - todayClearMs) ? yesterdayClearMs : todayClearMs;
+      const shiftMs = clearMs - schedClearMs;
+      if (Math.abs(shiftMs) < 12 * 3600000) suggestedMs += shiftMs;
     }
 
-    const suggestedDate = new Date(suggestedMs);
-    const nowMs = now.getTime();
     const isOverdue = nowMs > suggestedMs + 30 * 60000;
     const isPastDeadline = deadline ? nowMs > deadline : false;
 
     result.push({
-      ...act,
-      suggestedTime: suggestedDate.toISOString(),
-      suggestedMs,
-      isOverdue,
-      isPastDeadline,
+      ...act, suggestedTime: new Date(suggestedMs).toISOString(), suggestedMs,
+      isOverdue, isPastDeadline,
       deadline: deadline ? new Date(deadline).toISOString() : null,
-      deadlineMs: deadline,
-      timeUntilMs: suggestedMs - nowMs,
+      deadlineMs: deadline, timeUntilMs: suggestedMs - nowMs,
     });
+  }
+
+  // Auto-advance: if the first action is >2h overdue and there's a later action, skip it
+  // (user missed it — show the next relevant one instead of perpetually nagging)
+  while (result.length > 1 && result[0].timeUntilMs < -2 * 3600000) {
+    result[0].skipped = true;
+    result.shift();
   }
 
   return result;

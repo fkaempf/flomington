@@ -1760,7 +1760,7 @@ function CircleProgress({ value, max, size = 40, stroke = 3, countUp }) {
 }
 
 /* ========== CROSS CARD (COMPACT) ========== */
-function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank, virginsPerCross, forceOpen, currentUser, onTransfer, printListCrosses, setPrintListCrosses }) {
+function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank, virginsPerCross, forceOpen, currentUser, onTransfer, printListCrosses, setPrintListCrosses, expBank, setExpBank }) {
   const [detailOpen, setDetailOpen] = useState(false);
   useEffect(() => { if (forceOpen) setDetailOpen(true); }, [forceOpen]);
   const [editing, setEditing] = useState(false);
@@ -2032,6 +2032,32 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
             <p className="text-sm" style={{ color: 'var(--text-2)' }}>{cross.notes}</p>
           </div>
         )}
+
+        {cross.status === 'screening' && expBank && setExpBank && (() => {
+          const entry = expBank[cross.id] || { m: 0, f: 0 };
+          return (
+            <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(94,234,212,0.04)', border: '1px solid rgba(94,234,212,0.1)' }}>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold" style={{ color: '#5eead4' }}>Exp Bank</p>
+                <p className="text-xs" style={{ color: 'var(--text-3)' }}>{entry.m || 0}♂ {entry.f || 0}♀</p>
+              </div>
+              <div className="mb-2">
+                <p className="text-[10px] mb-1" style={{ color: '#93c5fd' }}>♂</p>
+                <div className="flex gap-1">
+                  <button onClick={(e) => { e.stopPropagation(); setExpBank(prev => { const cur = prev[cross.id] || { m: 0, f: 0, source: 'cross' }; return { ...prev, [cross.id]: { ...cur, m: Math.max(0, cur.m - 1) } }; }); }} className="qlog-btn flex-1" disabled={(entry.m || 0) <= 0} style={(entry.m || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                  {[1, 3, 5].map(n => <button key={n} onClick={(e) => { e.stopPropagation(); setExpBank(prev => { const cur = prev[cross.id] || { m: 0, f: 0, source: 'cross' }; return { ...prev, [cross.id]: { ...cur, m: (cur.m || 0) + n } }; }); }} className="qlog-btn flex-1">+{n}</button>)}
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] mb-1" style={{ color: '#f9a8d4' }}>♀</p>
+                <div className="flex gap-1">
+                  <button onClick={(e) => { e.stopPropagation(); setExpBank(prev => { const cur = prev[cross.id] || { m: 0, f: 0, source: 'cross' }; return { ...prev, [cross.id]: { ...cur, f: Math.max(0, cur.f - 1) } }; }); }} className="qlog-btn flex-1" disabled={(entry.f || 0) <= 0} style={(entry.f || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                  {[1, 3, 5].map(n => <button key={n} onClick={(e) => { e.stopPropagation(); setExpBank(prev => { const cur = prev[cross.id] || { m: 0, f: 0, source: 'cross' }; return { ...prev, [cross.id]: { ...cur, f: (cur.f || 0) + n } }; }); }} className="qlog-btn flex-1">+{n}</button>)}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Screening Guide */}
         {['collecting progeny', 'screening'].includes(cross.status) && (() => {
@@ -2398,7 +2424,7 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
 }
 
 /* ========== HOME SCREEN ========== */
-function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross, virginBank, setVirginBank, virginsPerCross, currentUser, transfers, onAcceptTransfer, onDeclineTransfer, onTransfer, STOCK_CATS, sentTransfers, onDismissTransfer, printListCrosses, setPrintListCrosses, initialCrossId }) {
+function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross, virginBank, setVirginBank, virginsPerCross, currentUser, transfers, onAcceptTransfer, onDeclineTransfer, onTransfer, STOCK_CATS, sentTransfers, onDismissTransfer, printListCrosses, setPrintListCrosses, initialCrossId, expBank, setExpBank }) {
   const [showCompleted, setShowCompleted] = useState(false);
   const [flipCat, setFlipCat] = useState(null);
   const [flipDate, setFlipDate] = useState(today());
@@ -2625,7 +2651,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
           <p className="section-header">Active Crosses</p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {activeCrosses.map(c => (
-              <CrossCard key={c.id} cross={c} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} forceOpen={selectedCrossId && (selectedCrossId === c.id || c.id.startsWith(selectedCrossId))} currentUser={currentUser} onTransfer={onTransfer} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} />
+              <CrossCard key={c.id} cross={c} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} forceOpen={selectedCrossId && (selectedCrossId === c.id || c.id.startsWith(selectedCrossId))} currentUser={currentUser} onTransfer={onTransfer} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} expBank={expBank} setExpBank={setExpBank} />
             ))}
           </div>
         </div>
@@ -2701,7 +2727,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
           {showCompleted && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mt-2">
               {completedCrosses.map(c => (
-                <CrossCard key={c.id} cross={c} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} />
+                <CrossCard key={c.id} cross={c} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} expBank={expBank} setExpBank={setExpBank} />
               ))}
             </div>
           )}
@@ -2767,13 +2793,13 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
           );
         })()}
       </Modal>
-      <StockModal stock={homeEditStock} onClose={() => setHomeEditStock(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={() => {}} STOCK_CATS={STOCK_CATS} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} />
+      <StockModal stock={homeEditStock} onClose={() => setHomeEditStock(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={() => {}} STOCK_CATS={STOCK_CATS} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} expBank={expBank} setExpBank={setExpBank} />
     </div>
   );
 }
 
 /* ========== STOCKS SCREEN ========== */
-function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, printListCrosses, onOpenPrint, onBulkActive }) {
+function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, printListCrosses, onOpenPrint, onBulkActive, expBank, setExpBank }) {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState(() => initialStockId ? 'all' : 'all');
   const [showAll, setShowAll] = useState(() => !!initialStockId);
@@ -3122,7 +3148,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </>
       )}
 
-      <StockModal stock={editing} onClose={() => setEditing(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={id => { setEditing(null); setDeleting(id); }} STOCK_CATS={STOCK_CATS} setCollections={setCollections} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} printList={printList} setPrintList={setPrintList} onMassAdd={() => { setEditing(null); setMassAdding(true); setMassAddText(''); setMassAddCat(catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter); setMassAddLoc('25inc'); }} />
+      <StockModal stock={editing} onClose={() => setEditing(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={id => { setEditing(null); setDeleting(id); }} STOCK_CATS={STOCK_CATS} setCollections={setCollections} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} printList={printList} setPrintList={setPrintList} onMassAdd={() => { setEditing(null); setMassAdding(true); setMassAddText(''); setMassAddCat(catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter); setMassAddLoc('25inc'); }} expBank={expBank} setExpBank={setExpBank} />
       <Confirm open={!!deleting} onOk={doDelete} onNo={() => setDeleting(null)} title="Delete stock?" msg="This stock will be permanently removed." />
 
       {/* Mass add stocks modal */}
@@ -3407,7 +3433,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   );
 }
 
-function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_CATS, setCollections, currentUser, onTransfer, virginBank, setVirginBank, printList, setPrintList, onMassAdd }) {
+function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_CATS, setCollections, currentUser, onTransfer, virginBank, setVirginBank, printList, setPrintList, onMassAdd, expBank, setExpBank }) {
   const [f, setF] = useState({});
   const [showNotes, setShowNotes] = useState(false);
   const [nameError, setNameError] = useState('');
@@ -3655,6 +3681,42 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
                 className="px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                 style={{ background: 'rgba(239,68,68,0.08)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>Clear</button>
             )}
+          </div>
+        </div>
+      )}
+      {!isNew && expBank && setExpBank && (
+        <div className="mb-4 p-3 rounded-xl" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold" style={{ color: '#5eead4' }}>Exp Bank</p>
+            <p className="text-xs" style={{ color: 'var(--text-3)' }}>{(expBank[f.id]?.m || 0)}♂ {(expBank[f.id]?.f || 0)}♀</p>
+          </div>
+          <div className="mb-2">
+            <p className="text-[10px] mb-1" style={{ color: '#93c5fd' }}>♂ Males</p>
+            <div className="flex gap-2">
+              <button onClick={() => { if ((expBank[f.id]?.m || 0) > 0) { setExpBank(prev => ({ ...prev, [f.id]: { ...(prev[f.id] || { m: 0, f: 0, source: 'stock' }), m: Math.max(0, (prev[f.id]?.m || 0) - 1) } })); toast.add('-1 ♂'); } }}
+                disabled={(expBank[f.id]?.m || 0) <= 0}
+                className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                style={(expBank[f.id]?.m || 0) > 0 ? { background: 'rgba(239,68,68,0.08)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' } : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', opacity: 0.4 }}>-1</button>
+              {[1, 3, 5].map(n => (
+                <button key={n} onClick={() => { setExpBank(prev => ({ ...prev, [f.id]: { ...(prev[f.id] || { m: 0, f: 0, source: 'stock' }), m: (prev[f.id]?.m || 0) + n } })); toast.add(`+${n} ♂ logged`); }}
+                  className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                  style={{ background: 'rgba(94,234,212,0.08)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] mb-1" style={{ color: '#f9a8d4' }}>♀ Females</p>
+            <div className="flex gap-2">
+              <button onClick={() => { if ((expBank[f.id]?.f || 0) > 0) { setExpBank(prev => ({ ...prev, [f.id]: { ...(prev[f.id] || { m: 0, f: 0, source: 'stock' }), f: Math.max(0, (prev[f.id]?.f || 0) - 1) } })); toast.add('-1 ♀'); } }}
+                disabled={(expBank[f.id]?.f || 0) <= 0}
+                className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                style={(expBank[f.id]?.f || 0) > 0 ? { background: 'rgba(239,68,68,0.08)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' } : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', opacity: 0.4 }}>-1</button>
+              {[1, 3, 5].map(n => (
+                <button key={n} onClick={() => { setExpBank(prev => ({ ...prev, [f.id]: { ...(prev[f.id] || { m: 0, f: 0, source: 'stock' }), f: (prev[f.id]?.f || 0) + n } })); toast.add(`+${n} ♀ logged`); }}
+                  className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                  style={{ background: 'rgba(94,234,212,0.08)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -5229,8 +5291,8 @@ function App() {
             toast.add('Transfer declined');
           }} STOCK_CATS={STOCK_CATS} sentTransfers={sentResolved} onDismissTransfer={(t) => {
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
-          }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} />}
-          {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} />}
+          }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} />}
+          {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
           {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} />}
           {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}

@@ -26,6 +26,7 @@ Then: `git add index.html && git add -f src/index.html && git commit && git push
 - **Labels**: Avery L7651 (38.1x21.2mm, 65/sheet) and L7161 (63.5x46.6mm, 18/sheet). QR codes via qrcode-generator CDN. Print opens popup window.
 - **Deep links**: `?stock=<id>` and `?cross=<id>` with owner-only access control for crosses.
 - **Background**: WebGL2 grainient shader for animated background.
+- **No emojis in the app UI.** Use text symbols (♀, ♂, ✕, etc.) instead.
 
 ## Google Sheets sync URL (hardcoded)
 ```

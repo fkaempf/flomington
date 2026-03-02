@@ -2189,7 +2189,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
               const nextA = nextActs[0];
               return (
                 <p className="text-[10px] mb-2 px-2 py-1 rounded-lg inline-block" style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa' }}>
-                  🔬 VCS from {parentStock.name}{nextA ? ` — Next: ${fmtTime(nextA.suggestedTime)}` : ''}
+                  VCS from {parentStock.name}{nextA ? ` — Next: ${fmtTime(nextA.suggestedTime)}` : ''}
                 </p>
               );
             })()}
@@ -2802,10 +2802,64 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
         ) : null}
       </div>
 
-      {/* VCS Dashboard */}
+      {/* Active Tasks — immediately after overdue banner */}
+      {activeTasks.length > 0 && (
+        <div className="mb-6">
+          <p className="section-header">Active Tasks</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {activeTasks.map(c => {
+              const isCollVgn = c.status === 'collecting virgins';
+              const isCollProg = c.status === 'collecting progeny';
+              const isRipening = c.status === 'ripening';
+              const isVirgin = c.status === 'waiting for virgins';
+              const cd = crossDetect(c, stocks);
+              let waited, ripeRemaining;
+              if (isRipening && c.ripeningStartDate) {
+                const rDays = -dFromNow(c.ripeningStartDate);
+                const rTarget = cd.o ? 3 : 5;
+                ripeRemaining = Math.max(0, rTarget - rDays);
+              }
+              waited = (isCollVgn || isCollProg || isRipening) ? 0 : -dFromNow(isVirgin ? c.setupDate : c.waitStartDate);
+              const target = 9;
+              const remaining = (isCollVgn || isCollProg || isRipening) ? 0 : target - waited;
+              const ready = isCollVgn || isCollProg || (isRipening && (ripeRemaining === undefined || ripeRemaining <= 0)) || remaining <= 0;
+              const ripeWaiting = isRipening && ripeRemaining > 0;
+              const tintR = ready ? 'rgba(239,68,68,' : 'rgba(245,158,11,';
+              const tintC = ready ? '#fca5a5' : '#fcd34d';
+              return (
+                <div key={c.id} className="card p-4 cursor-pointer" style={{ borderColor: tintR + '0.15)', background: tintR + '0.06)' }}
+                  onClick={() => { setSelectedCrossId(null); setTimeout(() => setSelectedCrossId(c.id), 0); activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{
+                      background: tintR + '0.1)',
+                      border: '1px solid ' + tintR + '0.15)',
+                    }}>
+                      <span className="text-xs" style={{ color: tintC }}>{ripeWaiting ? ripeRemaining + 'd' : ready ? '!' : remaining + 'd'}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold truncate" style={{ color: 'var(--text-1)' }}>{cl(c, stocks)}</p>
+                      <p className="text-xs" style={{ color: tintC }}>
+                        {isRipening ? (ripeRemaining <= 0 ? 'Ripening complete — ready!' : `${ripeRemaining}d ${cd.o ? 'retinal uptake' : 'GCaMP expression'} remaining`)
+                          : isCollProg ? 'Collect progeny now!'
+                          : isCollVgn ? 'Collect virgins for this cross'
+                          : ready
+                            ? (isVirgin ? 'Virgins eclosing — collect now!' : 'Progeny ready — collect now!')
+                            : (isVirgin ? `${remaining}d until virgins eclose` : `${remaining}d until progeny ready`)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* VCS Dashboard + Virgin-phase crosses */}
       {(() => {
         const vcsStocks = stocks.filter(s => s.vcs?.enabled && s.maintainer === currentUser && !stockTags(s).includes('Dead'));
-        if (!vcsStocks.length) return null;
+        const virginCrosses = myCrosses.filter(c => c.status === 'collecting virgins' || c.status === 'waiting for virgins');
+        if (!vcsStocks.length && !virginCrosses.length) return null;
         const now = new Date();
         // Sort by urgency: red first, then yellow, then green, then by next action time
         const sorted = [...vcsStocks].sort((a, b) => {
@@ -2817,8 +2871,39 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
         });
         return (
           <div className="mb-6">
-            <p className="section-header">🔬 Virgin Collections</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <p className="section-header">Virgin Collections</p>
+
+            {/* Virgin-phase crosses */}
+            {virginCrosses.length > 0 && (
+              <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${vcsStocks.length ? 'mb-3' : ''}`}>
+                {virginCrosses.map(c => {
+                  const isCollecting = c.status === 'collecting virgins';
+                  const waited = -dFromNow(c.setupDate);
+                  const remaining = 9 - waited;
+                  const ready = isCollecting || remaining <= 0;
+                  const vCollected = c.virginsCollected || 0;
+                  const vTarget = virginsPerCross || 5;
+                  return (
+                    <div key={c.id} className="card p-3 cursor-pointer active:scale-[0.98] transition-all" style={{
+                      borderColor: ready ? 'rgba(249,168,212,0.3)' : 'rgba(249,168,212,0.15)',
+                      background: ready ? 'rgba(249,168,212,0.06)' : 'transparent'
+                    }} onClick={() => { setSelectedCrossId(null); setTimeout(() => setSelectedCrossId(c.id), 0); activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <p className="text-xs font-bold truncate" style={{ color: 'var(--text-1)' }}>{cl(c, stocks)}</p>
+                        <span className="text-[9px] shrink-0 ml-2" style={{ color: 'var(--text-3)' }}>
+                          {c.overnightAt18 !== undefined ? (c.overnightAt18 ? '18°C' : 'RT') : ''} {isCollecting ? `${vCollected}/${vTarget}` : `${remaining}d`}
+                        </span>
+                      </div>
+                      <p className="text-[11px]" style={{ color: ready ? '#f9a8d4' : 'var(--text-3)' }}>
+                        {isCollecting ? 'Collecting virgins' : ready ? 'Virgins eclosing — collect!' : `Waiting — ${remaining}d until virgins`}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {vcsStocks.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {sorted.map(s => {
                 const v = s.vcs;
                 const status = getVcsStatus(v, now);
@@ -2963,63 +3048,11 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                   </div>
                 );
               })}
-            </div>
+            </div>}
           </div>
         );
       })()}
 
-      {/* Active Tasks */}
-      {activeTasks.length > 0 && (
-        <div className="mb-6">
-          <p className="section-header">Active Tasks</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {activeTasks.map(c => {
-              const isCollVgn = c.status === 'collecting virgins';
-              const isCollProg = c.status === 'collecting progeny';
-              const isRipening = c.status === 'ripening';
-              const isVirgin = c.status === 'waiting for virgins';
-              const cd = crossDetect(c, stocks);
-              let waited, ripeRemaining;
-              if (isRipening && c.ripeningStartDate) {
-                const rDays = -dFromNow(c.ripeningStartDate);
-                const rTarget = cd.o ? 3 : 5;
-                ripeRemaining = Math.max(0, rTarget - rDays);
-              }
-              waited = (isCollVgn || isCollProg || isRipening) ? 0 : -dFromNow(isVirgin ? c.setupDate : c.waitStartDate);
-              const target = 9;
-              const remaining = (isCollVgn || isCollProg || isRipening) ? 0 : target - waited;
-              const ready = isCollVgn || isCollProg || (isRipening && (ripeRemaining === undefined || ripeRemaining <= 0)) || remaining <= 0;
-              const ripeWaiting = isRipening && ripeRemaining > 0;
-              const tintR = ready ? 'rgba(239,68,68,' : 'rgba(245,158,11,';
-              const tintC = ready ? '#fca5a5' : '#fcd34d';
-              return (
-                <div key={c.id} className="card p-4 cursor-pointer" style={{ borderColor: tintR + '0.15)', background: tintR + '0.06)' }}
-                  onClick={() => { setSelectedCrossId(null); setTimeout(() => setSelectedCrossId(c.id), 0); activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{
-                      background: tintR + '0.1)',
-                      border: '1px solid ' + tintR + '0.15)',
-                    }}>
-                      <span className="text-xs" style={{ color: tintC }}>{ripeWaiting ? ripeRemaining + 'd' : ready ? '!' : remaining + 'd'}</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold truncate" style={{ color: 'var(--text-1)' }}>{cl(c, stocks)}</p>
-                      <p className="text-xs" style={{ color: tintC }}>
-                        {isRipening ? (ripeRemaining <= 0 ? 'Ripening complete — ready!' : `${ripeRemaining}d ${cd.o ? 'retinal uptake' : 'GCaMP expression'} remaining`)
-                          : isCollProg ? 'Collect progeny now!'
-                          : isCollVgn ? 'Collect virgins for this cross'
-                          : ready
-                            ? (isVirgin ? 'Virgins eclosing — collect now!' : 'Progeny ready — collect now!')
-                            : (isVirgin ? `${remaining}d until virgins eclose` : `${remaining}d until progeny ready`)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Onboarding */}
       {stocks.length === 0 && crosses.length === 0 && (
@@ -3849,7 +3882,7 @@ function VcsSetup({ f, setF, toast }) {
     <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span style={{ color: '#a78bfa' }}>🔬</span>
+          <span style={{ color: '#a78bfa' }}>♀</span>
           <p className="text-xs font-semibold" style={{ color: '#a78bfa' }}>VCS Active</p>
         </div>
         <div className="flex items-center gap-2">
@@ -5659,11 +5692,11 @@ function App() {
         const prefix = `vcs-${s.id}-${next.key}-${today()}`;
         if (next.timeUntilMs > 0 && next.timeUntilMs <= vcsRemindMin * 60000) {
           const k = prefix + '-remind';
-          if (!fired.has(k)) { fired.add(k); new Notification(`🔬 ${s.name}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); new Notification(`${s.name}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
         }
         if (next.timeUntilMs <= 0 && next.timeUntilMs > -60000) {
           const k = prefix + '-now';
-          if (!fired.has(k)) { fired.add(k); new Notification(`🔬 ${s.name}`, { body: `${next.label} NOW`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); new Notification(`${s.name}`, { body: `${next.label} NOW`, tag: k }); }
         }
         if (next.timeUntilMs < -(vcsOverdueMin * 60000)) {
           const k = prefix + '-overdue';

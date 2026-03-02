@@ -2872,18 +2872,21 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                   const ready = isCollecting || remaining <= 0;
                   const vCollected = c.virginsCollected || 0;
                   const vTarget = virginsPerCross || 5;
+                  const dotColor = ready ? '#f9a8d4' : isCollecting ? '#5eead4' : 'var(--text-3)';
+                  const borderColor = ready ? 'rgba(249,168,212,0.3)' : isCollecting ? 'rgba(94,234,212,0.2)' : 'rgba(148,163,184,0.15)';
                   return (
-                    <div key={c.id} className="card p-3 cursor-pointer active:scale-[0.98] transition-all" style={{
-                      borderColor: ready ? 'rgba(249,168,212,0.3)' : 'rgba(249,168,212,0.15)',
-                      background: ready ? 'rgba(249,168,212,0.06)' : 'transparent'
-                    }} onClick={() => { setSelectedCrossId(null); setTimeout(() => setSelectedCrossId(c.id), 0); activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <p className="text-xs font-bold truncate" style={{ color: 'var(--text-1)' }}>{cl(c, stocks)}</p>
+                    <div key={c.id} className="card p-3 cursor-pointer" style={{ border: `1px solid ${borderColor}` }}
+                      onClick={() => { setSelectedCrossId(null); setTimeout(() => setSelectedCrossId(c.id), 0); activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />
+                          <p className="text-xs font-bold truncate" style={{ color: 'var(--text-1)' }}>{cl(c, stocks)}</p>
+                        </div>
                         <span className="text-[9px] shrink-0 ml-2" style={{ color: 'var(--text-3)' }}>
-                          {c.overnightAt18 !== undefined ? (c.overnightAt18 ? '18°C' : 'RT') : ''} {isCollecting ? `${vCollected}/${vTarget}` : `${remaining}d`}
+                          {c.overnightAt18 !== undefined ? (c.overnightAt18 ? '18°C' : 'RT') + ' · ' : ''}{isCollecting ? `${vCollected}/${vTarget}` : `${remaining}d`}
                         </span>
                       </div>
-                      <p className="text-[11px]" style={{ color: ready ? '#f9a8d4' : 'var(--text-3)' }}>
+                      <p className="text-[11px] mb-1.5" style={{ color: ready ? '#f9a8d4' : isCollecting ? '#5eead4' : 'var(--text-3)' }}>
                         {isCollecting ? 'Collecting virgins' : ready ? 'Virgins eclosing — collect!' : `Waiting — ${remaining}d until virgins`}
                       </p>
                     </div>
@@ -2964,8 +2967,8 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                       <p className="text-[11px] mb-1.5" style={{ color: '#5eead4' }}>All done for this window</p>
                     )}
 
-                    {/* Action buttons */}
-                    <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
+                    {/* Action buttons — only show when next action is within 20min or overdue */}
+                    {(isPastDeadline || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
                       {isPastDeadline ? (
                         <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next?.key || 'evening', type: 'clear_discard' }); else logAction('clear_discard', next?.key || 'evening'); }}
                           className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
@@ -2999,7 +3002,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                           style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
                           Mark Cleared</button>
                       ) : null}
-                    </div>
+                    </div>}
 
                     {/* 18°C confirmation */}
                     {vcs18Confirm?.stockId === s.id && (

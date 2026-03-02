@@ -4584,63 +4584,6 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
     toast.add('All data cleared');
   }
 
-  // PIN gate for destructive actions
-  const [pinAction, setPinAction] = useState(null); // 'clear' | 'demo' | null
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState('');
-
-  function requestPinAction(action) {
-    setPinAction(action);
-    setPinInput('');
-    setPinError('');
-  }
-
-  // Keyboard support for settings PIN prompt
-  useEffect(() => {
-    if (!pinAction) return;
-    function onKeyDown(e) {
-      if (e.key >= '0' && e.key <= '9') {
-        setPinInput(prev => {
-          const next = prev + e.key;
-          setPinError('');
-          if (next.length === 4) {
-            const floHash = localStorage.getItem('flo-pin-Flo');
-            if (!floHash) { setPinError('Flo has no PIN set'); return ''; }
-            hashPin(next).then(h => {
-              if (h === floHash) { if (pinAction === 'clear') clearAll(); else if (pinAction === 'demo') loadDemo(); setPinAction(null); setPinInput(''); setPinError(''); }
-              else { setPinError('Wrong PIN'); setPinInput(''); }
-            });
-          }
-          return next.length <= 4 ? next : prev;
-        });
-      } else if (e.key === 'Backspace') {
-        setPinInput(prev => prev.slice(0, -1));
-        setPinError('');
-      } else if (e.key === 'Escape') {
-        setPinAction(null);
-      }
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [pinAction]);
-
-  function handlePinSubmit() {
-    const floHash = localStorage.getItem('flo-pin-Flo');
-    if (!floHash) { setPinError('Flo has no PIN set'); return; }
-    hashPin(pinInput).then(h => {
-      if (h === floHash) {
-        if (pinAction === 'clear') clearAll();
-        else if (pinAction === 'demo') loadDemo();
-        setPinAction(null);
-        setPinInput('');
-        setPinError('');
-      } else {
-        setPinError('Wrong PIN');
-        setPinInput('');
-      }
-    });
-  }
-
   function changePin() {
     USERS.forEach(u => localStorage.removeItem(`flo-pin-${u}`));
     if (sbConfigured) {
@@ -4748,12 +4691,12 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Demo Data</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Load sample stocks and crosses.</p>
-        <Btn v="s" onClick={() => requestPinAction('demo')} className="w-full">Load Demo Data</Btn>
+        <Btn v="s" onClick={loadDemo} className="w-full">Load Demo Data</Btn>
       </div>
 
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Clear All Data</p>
-        <Btn v="d" onClick={() => requestPinAction('clear')} className="w-full mt-2">Clear Everything</Btn>
+        <Btn v="d" onClick={clearAll} className="w-full mt-2">Clear Everything</Btn>
       </div>
       </>
       )}
@@ -4786,62 +4729,6 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
 
       <p className="text-[10px] text-center mt-4 mb-2" style={{ color: 'var(--text-3)' }}>Flomington</p>
 
-      {pinAction && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={() => setPinAction(null)}>
-          <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }} />
-          <div className="relative w-72 p-6 rounded-3xl" onClick={e => e.stopPropagation()}
-            style={{ background: 'rgba(15,12,41,0.3)', backdropFilter: 'blur(40px) saturate(1.6)', WebkitBackdropFilter: 'blur(40px) saturate(1.6)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 8px 40px rgba(0,0,0,0.35)' }}>
-            <p className="text-sm font-bold text-center mb-1" style={{ color: 'var(--text-1)' }}>Enter Flo's PIN</p>
-            <p className="text-xs text-center mb-5" style={{ color: 'var(--text-3)' }}>
-              {pinAction === 'clear' ? 'Required to clear all data' : 'Required to load demo data'}
-            </p>
-            <div className="flex gap-3 justify-center mb-4">
-              {[0, 1, 2, 3].map(i => <div key={i} className={`pin-dot ${i < pinInput.length ? 'filled' : ''}`} />)}
-            </div>
-            {pinError && <p className="text-xs text-red-400 mb-3 text-center font-medium">{pinError}</p>}
-            <div className="grid grid-cols-3 gap-2 mb-3" style={{ maxWidth: 220, margin: '0 auto' }}>
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-                <button key={n} onClick={() => {
-                  const next = pinInput + String(n);
-                  setPinInput(next);
-                  setPinError('');
-                  if (next.length === 4) {
-                    const floHash = localStorage.getItem('flo-pin-Flo');
-                    if (!floHash) { setPinError('Flo has no PIN set'); setPinInput(''); return; }
-                    hashPin(next).then(h => {
-                      if (h === floHash) { if (pinAction === 'clear') clearAll(); else if (pinAction === 'demo') loadDemo(); setPinAction(null); setPinInput(''); setPinError(''); }
-                      else { setPinError('Wrong PIN'); setPinInput(''); }
-                    });
-                  }
-                }}
-                  className="touch w-16 h-11 rounded-xl text-base font-semibold transition-all active:scale-95"
-                  style={{ color: 'var(--text-1)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-                  {n}
-                </button>
-              ))}
-              <button onClick={() => { setPinInput(pinInput.slice(0, -1)); setPinError(''); }}
-                className="touch w-16 h-11 rounded-xl text-xs transition-all active:scale-95"
-                style={{ color: 'var(--text-3)', background: 'var(--surface)' }}>Del</button>
-              <button onClick={() => {
-                const next = pinInput + '0';
-                setPinInput(next);
-                setPinError('');
-                if (next.length === 4) {
-                  const floHash = localStorage.getItem('flo-pin-Flo');
-                  if (!floHash) { setPinError('Flo has no PIN set'); setPinInput(''); return; }
-                  hashPin(next).then(h => {
-                    if (h === floHash) { if (pinAction === 'clear') clearAll(); else if (pinAction === 'demo') loadDemo(); setPinAction(null); setPinInput(''); setPinError(''); }
-                    else { setPinError('Wrong PIN'); setPinInput(''); }
-                  });
-                }
-              }}
-                className="touch w-16 h-11 rounded-xl text-base font-semibold transition-all active:scale-95"
-                style={{ color: 'var(--text-1)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>0</button>
-            </div>
-            <button onClick={() => setPinAction(null)} className="w-full text-xs mt-2 touch" style={{ color: 'var(--text-3)' }}>Cancel</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

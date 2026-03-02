@@ -690,8 +690,8 @@ const STOCK_VARIANTS = ['stock', 'expanded'];
 const VCS_DEFAULTS = {
   '18_2': { eveningClear: '17:30', morningCollect: '09:30', middayCollect: null, afternoonCollect: '17:00' },
   '18_3': { eveningClear: '17:30', morningCollect: '09:30', middayCollect: '14:00', afternoonCollect: '17:00' },
-  '25_2': { eveningClear: '18:00', morningCollect: '08:00', middayCollect: null, afternoonCollect: '14:30' },
-  '25_3': { eveningClear: '18:00', morningCollect: '08:00', middayCollect: '12:00', afternoonCollect: '16:30' },
+  '25_2': { eveningClear: '18:00', morningCollect: '09:00', middayCollect: null, afternoonCollect: '14:30' },
+  '25_3': { eveningClear: '18:00', morningCollect: '09:00', middayCollect: '12:00', afternoonCollect: '16:30' },
 };
 function vcsKey(o18, n) { return (o18 ? '18' : '25') + '_' + n; }
 function getVirginWindowH(o18) { return o18 ? 16 : 8; }
@@ -984,7 +984,7 @@ function makeDemoData() {
       notes: 'White-eyed host — expanded, recently flipped',
       variant: 'expanded', category: 'No Collection', maintainer: 'Bella',
       vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 3,
-        schedule: { eveningClear: '18:00', morningCollect: '08:00', middayCollect: '12:00', afternoonCollect: '16:30' },
+        schedule: { eveningClear: '18:00', morningCollect: '09:00', middayCollect: '12:00', afternoonCollect: '16:30' },
         lastClearTime: new Date(new Date().setHours(18, 0, 0, 0) - 86400000).toISOString(),
         lastClearTemp: '25', virginDeadline: null, todayActions: [], createdAt: addDays(t, -7) } },
     // s3: Expanded, RT, Flo Stocks 2, near flip (6d of 7d → 86%)
@@ -995,10 +995,10 @@ function makeDemoData() {
       variant: 'expanded', category: 'Flo Stocks 2', maintainer: 'Shahar',
       source: 'Kyoto', sourceId: '105666',
       vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 2,
-        schedule: { eveningClear: '18:00', morningCollect: '08:00', middayCollect: null, afternoonCollect: '14:30' },
+        schedule: { eveningClear: '18:00', morningCollect: '09:00', middayCollect: null, afternoonCollect: '14:30' },
         lastClearTime: new Date(new Date().setHours(18, 0, 0, 0) - 86400000).toISOString(),
         lastClearTemp: '25', virginDeadline: null,
-        todayActions: [{ type: 'collect', key: 'morning', time: new Date(new Date().setHours(8, 15, 0, 0)).toISOString(), scheduled: '08:00' }],
+        todayActions: [{ type: 'collect', key: 'morning', time: new Date(new Date().setHours(9, 15, 0, 0)).toISOString(), scheduled: '09:00' }],
         createdAt: addDays(t, -10) } },
     // s4e: Expanded, 18C, Lab Stocks, fresh (1d of 7d → 14%)
     //     Flo, Bloomington + FlyBase, VCS 18°C 3×
@@ -1018,10 +1018,10 @@ function makeDemoData() {
       notes: 'White-star host for injections — expanded',
       variant: 'expanded', category: 'Flo Stocks 1', maintainer: 'Flo',
       vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 3,
-        schedule: { eveningClear: '18:00', morningCollect: '08:00', middayCollect: '12:00', afternoonCollect: '16:30' },
-        lastClearTime: new Date(new Date().setHours(8, 30, 0, 0)).toISOString(),
+        schedule: { eveningClear: '18:00', morningCollect: '09:00', middayCollect: '12:00', afternoonCollect: '16:30' },
+        lastClearTime: new Date(new Date().setHours(9, 30, 0, 0)).toISOString(),
         lastClearTemp: '25', virginDeadline: null,
-        todayActions: [{ type: 'collect', key: 'morning', time: new Date(new Date().setHours(8, 30, 0, 0)).toISOString(), scheduled: '08:00' }],
+        todayActions: [{ type: 'collect', key: 'morning', time: new Date(new Date().setHours(9, 30, 0, 0)).toISOString(), scheduled: '09:00' }],
         createdAt: addDays(t, -21) } },
     // s25: Expanded, RT, No Collection, OVERDUE (9d of 7d → 129%)
     //     Myrto, no source

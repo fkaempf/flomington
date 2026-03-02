@@ -2836,7 +2836,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                 return (
                   <div key={s.id} className="card p-4" style={{ border: `1px solid ${borderColor}` }}>
                     <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0 cursor-pointer active:scale-95 transition-all" onClick={() => setHomeEditStock({ ...s })}>
                         <div className="w-2 h-2 rounded-full shrink-0" style={{ background: dotColor }} />
                         <p className="text-sm font-bold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
                       </div>

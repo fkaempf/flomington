@@ -739,9 +739,10 @@ function computeNextActions(vcs, now) {
   // Only count actions from the current window (since last clear)
   const doneKeys = new Set();
   const clearMs = lastClearTime ? new Date(lastClearTime).getTime() : 0;
+  // The clear that set lastClearTime IS the evening clear — auto-mark it done
+  if (lastClearTime) doneKeys.add('evening');
   (todayActions || []).forEach(a => {
     if (!a.key) return;
-    // Only count if the action was logged after the last clear
     const actionMs = a.time ? new Date(a.time).getTime() : 0;
     if (actionMs >= clearMs) doneKeys.add(a.key);
   });
@@ -751,7 +752,6 @@ function computeNextActions(vcs, now) {
   const nowMs = now.getTime();
 
   // Compute suggested times based on last clear shift
-  const todayBase = new Date(now); todayBase.setHours(0, 0, 0, 0);
   const eveningSchedMins = parseHHMM(schedule.eveningClear);
 
   const result = [];
@@ -761,17 +761,22 @@ function computeNextActions(vcs, now) {
     const schedMins = parseHHMM(act.scheduled);
     if (schedMins === null) continue;
 
-    let suggestedMs = todayBase.getTime() + schedMins * 60000;
+    // Base: place action at the next occurrence of scheduled time after the clear
+    const clearDate = lastClearTime ? new Date(lastClearTime) : new Date(now);
+    const baseDay = new Date(clearDate); baseDay.setHours(0, 0, 0, 0);
+    let suggestedMs = baseDay.getTime() + schedMins * 60000;
 
-    // Dynamic shift: offset all actions by how much the actual clear deviated from scheduled
+    // Dynamic shift: offset by how much the actual clear deviated from scheduled
     if (lastClearTime && eveningSchedMins !== null && act.key !== 'evening') {
-      const yesterdayClearMs = todayBase.getTime() - 86400000 + eveningSchedMins * 60000;
-      const todayClearMs = todayBase.getTime() + eveningSchedMins * 60000;
-      // Pick whichever scheduled clear is closest to actual clear
-      const schedClearMs = Math.abs(clearMs - yesterdayClearMs) < Math.abs(clearMs - todayClearMs) ? yesterdayClearMs : todayClearMs;
+      const schedClearMs = baseDay.getTime() + eveningSchedMins * 60000;
+      // If clear happened after its scheduled time (same day), shift is positive
+      // If before (clear was done early), shift is negative
       const shiftMs = clearMs - schedClearMs;
       if (Math.abs(shiftMs) < 12 * 3600000) suggestedMs += shiftMs;
     }
+
+    // Day boundary: if suggested time is before the clear, push to next day
+    if (suggestedMs <= clearMs) suggestedMs += 86400000;
 
     const isOverdue = nowMs > suggestedMs + 30 * 60000;
     const isPastDeadline = deadline ? nowMs > deadline : false;
@@ -785,7 +790,6 @@ function computeNextActions(vcs, now) {
   }
 
   // Auto-advance: if the first action is >2h overdue and there's a later action, skip it
-  // (user missed it — show the next relevant one instead of perpetually nagging)
   while (result.length > 1 && result[0].timeUntilMs < -2 * 3600000) {
     result[0].skipped = true;
     result.shift();
@@ -992,25 +996,41 @@ function makeDemoData() {
         lastClearTime: new Date(new Date().setHours(18, 0, 0, 0) - 86400000).toISOString(),
         lastClearTemp: '25', virginDeadline: null, todayActions: [], createdAt: addDays(t, -7) } },
     // s3: Expanded, RT, Flo Stocks 2, near flip (6d of 7d → 86%)
-    //     Catherine, Kyoto source
+    //     Shahar, Kyoto source, VCS 25°C 2×
     { id: 's3', name: 'Canton-S', genotype: '+', location: 'RT',
       createdAt: addDays(t, -120), lastFlipped: addDays(t, -6),
       notes: 'Wild type, good for behaviour — expanded at RT',
       variant: 'expanded', category: 'Flo Stocks 2', maintainer: 'Shahar',
-      source: 'Kyoto', sourceId: '105666' },
+      source: 'Kyoto', sourceId: '105666',
+      vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 2,
+        schedule: { eveningClear: '18:00', morningCollect: '08:00', middayCollect: null, afternoonCollect: '14:30' },
+        lastClearTime: new Date(new Date().setHours(18, 0, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '25', virginDeadline: null,
+        todayActions: [{ type: 'collect', key: 'morning', time: new Date(new Date().setHours(8, 15, 0, 0)).toISOString(), scheduled: '08:00' }],
+        createdAt: addDays(t, -10) } },
     // s4e: Expanded, 18C, Lab Stocks, fresh (1d of 7d → 14%)
-    //     Seba, Bloomington + FlyBase
+    //     Flo, Bloomington + FlyBase, VCS 18°C 3×
     { id: 's4e', name: 'yw (expanded)', genotype: 'y[1] w[1]', location: '18',
       createdAt: addDays(t, -30), lastFlipped: addDays(t, -1),
       notes: 'Yellow-white host line — expanded backup at 18C, just flipped',
       variant: 'expanded', category: 'Lab Stocks', maintainer: 'Flo',
-      source: 'Bloomington', sourceId: '1495', flybaseId: 'FBst0001495' },
+      source: 'Bloomington', sourceId: '1495', flybaseId: 'FBst0001495',
+      vcs: { enabled: true, overnightAt18: true, collectionsPerDay: 3,
+        schedule: { eveningClear: '17:30', morningCollect: '09:30', middayCollect: '14:00', afternoonCollect: '17:00' },
+        lastClearTime: new Date(new Date().setHours(17, 45, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '18', virginDeadline: null, todayActions: [], createdAt: addDays(t, -5) } },
     // s24: Expanded, 25inc, Flo Stocks 1, mid (4d of 7d → 57%)
-    //     Tomke, no source
+    //     Flo, no source, VCS 25°C 3×
     { id: 's24', name: 'w[*] (expanded)', genotype: 'w[*]', location: '25inc',
       createdAt: addDays(t, -80), lastFlipped: addDays(t, -4),
       notes: 'White-star host for injections — expanded',
-      variant: 'expanded', category: 'Flo Stocks 1', maintainer: 'Flo' },
+      variant: 'expanded', category: 'Flo Stocks 1', maintainer: 'Flo',
+      vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 3,
+        schedule: { eveningClear: '18:00', morningCollect: '08:00', middayCollect: '12:00', afternoonCollect: '16:30' },
+        lastClearTime: new Date(new Date().setHours(8, 30, 0, 0)).toISOString(),
+        lastClearTemp: '25', virginDeadline: null,
+        todayActions: [{ type: 'collect', key: 'morning', time: new Date(new Date().setHours(8, 30, 0, 0)).toISOString(), scheduled: '08:00' }],
+        createdAt: addDays(t, -21) } },
     // s25: Expanded, RT, No Collection, OVERDUE (9d of 7d → 129%)
     //     Myrto, no source
     { id: 's25', name: 'Berlin-K', genotype: '+', location: 'RT',
@@ -2609,6 +2629,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
   const [flipDate, setFlipDate] = useState(today());
   const [homeEditStock, setHomeEditStock] = useState(null);
   const [vcsBankPrompt, setVcsBankPrompt] = useState(null); // { stockId, stockName }
+  const [vcs18Confirm, setVcs18Confirm] = useState(null); // { stockId, key, type, withCollect }
   const [selectedCrossId, setSelectedCrossId] = useState(initialCrossId || null);
   const activeRef = useRef(null);
   const healthRef = useRef(null);
@@ -2790,13 +2811,13 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                 const borderColor = status === 'red' ? 'rgba(239,68,68,0.3)' : status === 'yellow' ? 'rgba(234,179,8,0.3)' : 'rgba(94,234,212,0.2)';
                 const dotColor = status === 'red' ? '#ef4444' : status === 'yellow' ? '#eab308' : '#5eead4';
 
-                function logAction(type, key) {
+                function logAction(type, key, temp) {
                   const action = { type, key, time: new Date().toISOString(), scheduled: next?.scheduled || '' };
                   const newActions = [...(v.todayActions || []), action];
                   let newVcs = { ...v, todayActions: newActions };
                   if (type === 'clear' || type === 'clear_discard') {
                     newVcs.lastClearTime = action.time;
-                    newVcs.lastClearTemp = v.overnightAt18 ? '18' : '25';
+                    newVcs.lastClearTemp = temp || (v.overnightAt18 ? '18' : '25');
                     newVcs.virginDeadline = computeDeadline(action.time, v.overnightAt18);
                     newVcs.todayActions = [action]; // Reset for new window
                   }
@@ -2854,36 +2875,56 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                     {/* Action buttons */}
                     <div className="flex gap-2">
                       {isPastDeadline ? (
-                        <button onClick={() => logAction('clear_discard', next?.key || 'evening')}
+                        <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next?.key || 'evening', type: 'clear_discard' }); else logAction('clear_discard', next?.key || 'evening'); }}
                           className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                           style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear & Discard ↻</button>
                       ) : next?.type === 'collect' || next?.type === 'collect_clear' ? (
                         <>
                           <button onClick={() => {
-                            logAction(next.type === 'collect_clear' ? 'clear' : 'collect', next.key);
-                            setVcsBankPrompt({ stockId: s.id, stockName: s.name });
+                            if (next.type === 'collect_clear' && v.overnightAt18) {
+                              setVcsBankPrompt({ stockId: s.id, stockName: s.name });
+                              setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear', withCollect: true });
+                            } else {
+                              logAction(next.type === 'collect_clear' ? 'clear' : 'collect', next.key);
+                              setVcsBankPrompt({ stockId: s.id, stockName: s.name });
+                            }
                           }}
                             className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' }}>
                             {next.type === 'collect_clear' ? 'Collect + Clear ✓' : 'Mark Collected ✓'}
                           </button>
-                          <button onClick={() => logAction('clear', next.key)}
+                          <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear' }); else logAction('clear', next.key); }}
                             className="px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Clear Instead ↻</button>
                         </>
                       ) : next?.type === 'clear_discard' ? (
                         <>
-                          <button onClick={() => logAction('clear_discard', next.key)}
+                          <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear_discard' }); else logAction('clear_discard', next.key); }}
                             className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear + Discard ⚠️</button>
                         </>
                       ) : next?.type === 'clear' ? (
-                        <button onClick={() => logAction('clear', next.key)}
+                        <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear' }); else logAction('clear', next.key); }}
                           className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                           style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
-                          {v.overnightAt18 ? 'Mark Cleared → 18°C' : 'Mark Cleared'}</button>
+                          Mark Cleared</button>
                       ) : null}
                     </div>
+
+                    {/* 18°C confirmation */}
+                    {vcs18Confirm?.stockId === s.id && (
+                      <div className="mt-3 p-2.5 rounded-lg" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+                        <p className="text-[10px] font-semibold mb-2" style={{ color: '#a78bfa' }}>Moved to 18°C?</p>
+                        <div className="flex gap-2">
+                          <button onClick={() => { logAction(vcs18Confirm.type, vcs18Confirm.key, '18'); setVcs18Confirm(null); }}
+                            className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>Yes, at 18°C</button>
+                          <button onClick={() => { logAction(vcs18Confirm.type, vcs18Confirm.key, '25'); setVcs18Confirm(null); }}
+                            className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>No, room temp</button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Inline virgin bank prompt */}
                     {vcsBankPrompt?.stockId === s.id && (

@@ -4463,7 +4463,7 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
   );
 }
 
-function VirginNotifSettings({ notifyVirgins, setNotifyVirgins, toast }) {
+function VirginNotifSettings({ toast }) {
   const [vcsNotify, setVcsNotify] = useLS('flo-vcs-notify', true);
   const [vcsRemindMin, setVcsRemindMin] = useLS('flo-vcs-remind-min', 15);
   const [vcsOverdueMin, setVcsOverdueMin] = useLS('flo-vcs-overdue-min', 30);
@@ -4476,23 +4476,15 @@ function VirginNotifSettings({ notifyVirgins, setNotifyVirgins, toast }) {
   return (
     <div className="card p-5">
       <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Virgin Collection Notifications</p>
-      <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Reminders for cross virgin windows and VCS schedules.</p>
+      <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Alerts for VCS schedules and cross virgin windows.</p>
       <div className="space-y-3">
         <button onClick={() => {
-          if (!notifyVirgins) requestPerm(() => { setNotifyVirgins(true); toast.add('Cross reminders enabled'); });
-          else { setNotifyVirgins(false); toast.add('Cross reminders disabled'); }
-        }}
-          className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-[0.97]"
-          style={notifyVirgins ? { background: 'rgba(34,197,94,0.1)', color: '#86efac', border: '1px solid rgba(34,197,94,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
-          {notifyVirgins ? 'Cross Reminders Enabled' : 'Enable Cross Reminders'}
-        </button>
-        <button onClick={() => {
-          if (!vcsNotify) requestPerm(() => { setVcsNotify(true); toast.add('VCS alerts enabled'); });
-          else { setVcsNotify(false); toast.add('VCS alerts disabled'); }
+          if (!vcsNotify) requestPerm(() => { setVcsNotify(true); toast.add('Notifications enabled'); });
+          else { setVcsNotify(false); toast.add('Notifications disabled'); }
         }}
           className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-[0.97]"
           style={vcsNotify ? { background: 'rgba(34,197,94,0.1)', color: '#86efac', border: '1px solid rgba(34,197,94,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
-          {vcsNotify ? 'VCS Alerts Enabled' : 'Enable VCS Alerts'}
+          {vcsNotify ? 'Notifications Enabled' : 'Enable Notifications'}
         </button>
         {vcsNotify && (
           <div className="grid grid-cols-2 gap-3">
@@ -4510,7 +4502,7 @@ function VirginNotifSettings({ notifyVirgins, setNotifyVirgins, toast }) {
 }
 
 /* ========== SETTINGS SCREEN ========== */
-function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, notifyVirgins, setNotifyVirgins, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser }) {
+function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser }) {
   const fileRef = useRef(null);
   const [showRef, setShowRef] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -4685,7 +4677,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       </div>
       )}
 
-      <VirginNotifSettings notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} toast={toast} />
+      <VirginNotifSettings toast={toast} />
 
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Calendar Export</p>
@@ -5545,7 +5537,6 @@ function App() {
     if (need.length > 0) setStocks(p => p.map(s => s.source === 'Bloomington' && s.sourceId && !s.flybaseId ? { ...s, flybaseId: `FBst${s.sourceId.replace(/\D/g, '').padStart(7, '0')}` } : s));
   }, []);
   const STOCK_CATS = collections;
-  const [notifyVirgins, setNotifyVirgins] = useLS('flo-notify-virgins', false);
   const [printList, setPrintList] = useState([]);
   const [printListCrosses, setPrintListCrosses] = useState([]);
   const [printOpen, setPrintOpen] = useState(false);
@@ -5698,44 +5689,7 @@ function App() {
     }
   }, [deepLinkCross, crosses]);
 
-  // Virgin collection notifications at 9:00, 13:30, 18:00
-  useEffect(() => {
-    if (!notifyVirgins) return;
-    const NOTIFY_TIMES = [[9, 0], [13, 30], [18, 0]];
-    const lastNotify = { key: '' };
-
-    function check() {
-      const now = new Date();
-      const h = now.getHours(), m = now.getMinutes();
-      const timeKey = `${now.toDateString()}-${h}:${m}`;
-      if (lastNotify.key === timeKey) return;
-
-      const match = NOTIFY_TIMES.some(([th, tm]) => h === th && m === tm);
-      if (!match) return;
-      lastNotify.key = timeKey;
-
-      const virginCrosses = crosses.filter(c =>
-        c.owner === currentUser &&
-        ['collecting virgins', 'waiting for virgins'].includes(c.status)
-      );
-      if (virginCrosses.length === 0) return;
-
-      if (Notification.permission === 'granted') {
-        const count = virginCrosses.length;
-        new Notification('Flomington — Virgin Collection', {
-          body: `${count} cross${count > 1 ? 'es' : ''} need${count === 1 ? 's' : ''} virgin collection`,
-          icon: 'icon-192.png',
-          tag: 'virgin-' + timeKey,
-        });
-      }
-    }
-
-    const interval = setInterval(check, 30000); // check every 30s
-    check();
-    return () => clearInterval(interval);
-  }, [notifyVirgins, crosses, currentUser]);
-
-  // VCS notifications — dynamic schedule-based
+  // Unified virgin collection notifications (crosses + VCS stocks)
   const [vcsNotify, setVcsNotify] = useLS('flo-vcs-notify', true);
   const [vcsRemindMin, setVcsRemindMin] = useLS('flo-vcs-remind-min', 15);
   const [vcsOverdueMin, setVcsOverdueMin] = useLS('flo-vcs-overdue-min', 30);
@@ -5744,32 +5698,28 @@ function App() {
     if (!vcsNotify || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     const fired = new Set();
 
-    function checkVcs() {
+    function checkAll() {
       const now = new Date();
+
+      // ── VCS stocks ──
       const vcsStocks = stocks.filter(s => s.vcs?.enabled && s.maintainer === currentUser && !stockTags(s).includes('Dead'));
       vcsStocks.forEach(s => {
         const actions = computeNextActions(s.vcs, now);
         const next = actions[0];
         if (!next) return;
-
         const prefix = `vcs-${s.id}-${next.key}-${today()}`;
-
-        // Reminder N min before
         if (next.timeUntilMs > 0 && next.timeUntilMs <= vcsRemindMin * 60000) {
           const k = prefix + '-remind';
           if (!fired.has(k)) { fired.add(k); new Notification(`🔬 ${s.name}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
         }
-        // At time
         if (next.timeUntilMs <= 0 && next.timeUntilMs > -60000) {
           const k = prefix + '-now';
           if (!fired.has(k)) { fired.add(k); new Notification(`🔬 ${s.name}`, { body: `${next.label} NOW`, tag: k }); }
         }
-        // Overdue
         if (next.timeUntilMs < -(vcsOverdueMin * 60000)) {
           const k = prefix + '-overdue';
           if (!fired.has(k)) { fired.add(k); new Notification(`⚠️ ${s.name}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
         }
-        // Deadline warning (30min before)
         if (next.deadlineMs) {
           const untilDeadline = next.deadlineMs - now.getTime();
           if (untilDeadline > 0 && untilDeadline <= 30 * 60000) {
@@ -5778,12 +5728,33 @@ function App() {
           }
         }
       });
+
+      // ── Crosses needing virgins ──
+      const virginCrosses = crosses.filter(c => c.owner === currentUser && ['collecting virgins', 'waiting for virgins'].includes(c.status));
+      if (virginCrosses.length > 0) {
+        const CROSS_TIMES = [[9, 0], [13, 30], [18, 0]];
+        const h = now.getHours(), m = now.getMinutes();
+        CROSS_TIMES.forEach(([th, tm]) => {
+          const diffMin = (h - th) * 60 + (m - tm);
+          const k = `cross-virgin-${th}:${tm}-${today()}`;
+          if (fired.has(k)) return;
+          if (diffMin >= -vcsRemindMin && diffMin <= 0) {
+            fired.add(k);
+            const count = virginCrosses.length;
+            new Notification('Flomington — Virgin Collection', { body: `${count} cross${count > 1 ? 'es' : ''} need${count === 1 ? 's' : ''} virgins`, tag: k });
+          } else if (diffMin > 0 && diffMin <= vcsOverdueMin) {
+            fired.add(k);
+            const count = virginCrosses.length;
+            new Notification('⚠️ Virgin Collection Overdue', { body: `${count} cross${count > 1 ? 'es' : ''} — ${diffMin}min past scheduled time`, tag: k });
+          }
+        });
+      }
     }
 
-    const iv = setInterval(checkVcs, 60000);
-    checkVcs();
+    const iv = setInterval(checkAll, 60000);
+    checkAll();
     return () => clearInterval(iv);
-  }, [vcsNotify, stocks, currentUser, vcsRemindMin, vcsOverdueMin]);
+  }, [vcsNotify, stocks, crosses, currentUser, vcsRemindMin, vcsOverdueMin]);
 
   const myTransfers = transfers.filter(t => t.to === currentUser && t.status === 'pending');
   const sentResolved = transfers.filter(t => t.from === currentUser && (t.status === 'accepted' || t.status === 'declined') && !t.seen);
@@ -5843,7 +5814,7 @@ function App() {
           {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
           {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} />}
-          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
+          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
         </div>
       </main>
 

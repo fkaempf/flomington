@@ -4476,7 +4476,7 @@ function VirginNotifSettings({ toast }) {
   return (
     <div className="card p-5">
       <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Virgin Collection Notifications</p>
-      <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Alerts for VCS schedules and cross virgin windows.</p>
+      <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Alerts for VCS collection schedules and deadlines.</p>
       <div className="space-y-3">
         <button onClick={() => {
           if (!vcsNotify) requestPerm(() => { setVcsNotify(true); toast.add('Notifications enabled'); });
@@ -5689,7 +5689,7 @@ function App() {
     }
   }, [deepLinkCross, crosses]);
 
-  // Unified virgin collection notifications (crosses + VCS stocks)
+  // Virgin collection notifications — VCS schedule-based
   const [vcsNotify, setVcsNotify] = useLS('flo-vcs-notify', true);
   const [vcsRemindMin, setVcsRemindMin] = useLS('flo-vcs-remind-min', 15);
   const [vcsOverdueMin, setVcsOverdueMin] = useLS('flo-vcs-overdue-min', 30);
@@ -5729,32 +5729,12 @@ function App() {
         }
       });
 
-      // ── Crosses needing virgins ──
-      const virginCrosses = crosses.filter(c => c.owner === currentUser && ['collecting virgins', 'waiting for virgins'].includes(c.status));
-      if (virginCrosses.length > 0) {
-        const CROSS_TIMES = [[9, 0], [13, 30], [18, 0]];
-        const h = now.getHours(), m = now.getMinutes();
-        CROSS_TIMES.forEach(([th, tm]) => {
-          const diffMin = (h - th) * 60 + (m - tm);
-          const k = `cross-virgin-${th}:${tm}-${today()}`;
-          if (fired.has(k)) return;
-          if (diffMin >= -vcsRemindMin && diffMin <= 0) {
-            fired.add(k);
-            const count = virginCrosses.length;
-            new Notification('Flomington — Virgin Collection', { body: `${count} cross${count > 1 ? 'es' : ''} need${count === 1 ? 's' : ''} virgins`, tag: k });
-          } else if (diffMin > 0 && diffMin <= vcsOverdueMin) {
-            fired.add(k);
-            const count = virginCrosses.length;
-            new Notification('⚠️ Virgin Collection Overdue', { body: `${count} cross${count > 1 ? 'es' : ''} — ${diffMin}min past scheduled time`, tag: k });
-          }
-        });
-      }
     }
 
     const iv = setInterval(checkAll, 60000);
     checkAll();
     return () => clearInterval(iv);
-  }, [vcsNotify, stocks, crosses, currentUser, vcsRemindMin, vcsOverdueMin]);
+  }, [vcsNotify, stocks, currentUser, vcsRemindMin, vcsOverdueMin]);
 
   const myTransfers = transfers.filter(t => t.to === currentUser && t.status === 'pending');
   const sentResolved = transfers.filter(t => t.from === currentUser && (t.status === 'accepted' || t.status === 'declined') && !t.seen);

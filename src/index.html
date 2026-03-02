@@ -1375,6 +1375,15 @@ function makeDemoData() {
   };
 
   // ════════════════════════════════════════════════════════════════════
+  // EXP BANK — experimental animals collected from crosses/stocks
+  // ════════════════════════════════════════════════════════════════════
+  const expBank = {
+    'c5': { m: 8, f: 12, source: 'cross' },   // elav-GAL4 x UAS-jGCaMP7f — collecting progeny
+    'c15': { m: 3, f: 5, source: 'cross' },    // Canton-S x w1118 — collecting progeny
+    's3': { m: 2, f: 4, source: 'stock' },      // Canton-S — direct from stock
+  };
+
+  // ════════════════════════════════════════════════════════════════════
   // TRANSFERS — pending requests between users
   // Types: stock (maintainership), cross (ownership), collection (all stocks in cat)
   // ════════════════════════════════════════════════════════════════════
@@ -1400,7 +1409,7 @@ function makeDemoData() {
   const cats = [...new Set(stocks.map(s => s.category).filter(Boolean))];
   const collections = [...cats.filter(c => c !== 'No Collection'), 'No Collection'];
 
-  return { stocks, crosses, virginBank, transfers, collections };
+  return { stocks, crosses, virginBank, expBank, transfers, collections };
 }
 
 /* ========== PIN LOCK ========== */
@@ -4003,7 +4012,7 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
 }
 
 /* ========== SETTINGS SCREEN ========== */
-function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setTransfers, setCollections, notifyVirgins, setNotifyVirgins, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser }) {
+function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, notifyVirgins, setNotifyVirgins, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser }) {
   const fileRef = useRef(null);
   const [showRef, setShowRef] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -4071,6 +4080,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
     setStocks(d.stocks);
     setCrosses(d.crosses);
     if (d.virginBank && setVirginBank) setVirginBank(d.virginBank);
+    if (d.expBank && setExpBank) setExpBank(d.expBank);
     if (d.transfers && setTransfers) setTransfers(d.transfers);
     if (d.collections && setCollections) setCollections(d.collections);
     toast.add('Demo data loaded');
@@ -4079,6 +4089,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
   function clearAll() {
     setStocks([]);
     setCrosses([]);
+    if (setExpBank) setExpBank({});
     toast.add('All data cleared');
   }
 
@@ -5295,7 +5306,7 @@ function App() {
           {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
           {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} />}
-          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
+          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
         </div>
       </main>
 

@@ -753,9 +753,7 @@ function computeNextActions(vcs, now) {
   const deadline = lastClearTime ? clearMs + windowMs : null;
   const nowMs = now.getTime();
 
-  // Compute suggested times based on last clear shift
-  const eveningSchedMins = parseHHMM(schedule.eveningClear);
-
+  // Fixed schedule times — no dynamic shift. Deadline moves with actual clear time.
   const result = [];
   for (const act of actions) {
     if (doneKeys.has(act.key)) continue;
@@ -763,21 +761,12 @@ function computeNextActions(vcs, now) {
     const schedMins = parseHHMM(act.scheduled);
     if (schedMins === null) continue;
 
-    // Base: place action at the next occurrence of scheduled time after the clear
+    // Place at the next occurrence of scheduled time after the clear
     const clearDate = lastClearTime ? new Date(lastClearTime) : new Date(now);
     const baseDay = new Date(clearDate); baseDay.setHours(0, 0, 0, 0);
     let suggestedMs = baseDay.getTime() + schedMins * 60000;
 
-    // Dynamic shift: offset by how much the actual clear deviated from scheduled
-    if (lastClearTime && eveningSchedMins !== null && act.key !== 'evening') {
-      const schedClearMs = baseDay.getTime() + eveningSchedMins * 60000;
-      // If clear happened after its scheduled time (same day), shift is positive
-      // If before (clear was done early), shift is negative
-      const shiftMs = clearMs - schedClearMs;
-      if (Math.abs(shiftMs) < 12 * 3600000) suggestedMs += shiftMs;
-    }
-
-    // Day boundary: if suggested time is before the clear, push to next day
+    // Day boundary: if scheduled time is before the clear, it's tomorrow
     if (suggestedMs <= clearMs) suggestedMs += 86400000;
 
     const isOverdue = nowMs > suggestedMs + 30 * 60000;
@@ -2964,10 +2953,12 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
 
                     {/* Status message */}
                     {isPastDeadline ? (
-                      <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#ef4444' }}>❌ Deadline PASSED — clear & discard</p>
+                      <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#ef4444' }}>Deadline PASSED — clear & discard</p>
+                    ) : next && next.timeUntilMs > 2 * 3600000 ? (
+                      <p className="text-[11px] mb-1.5" style={{ color: '#5eead4' }}>Done for now — next: {fmtTime(next.suggestedTime)}</p>
                     ) : next ? (
                       <p className="text-[11px] mb-1.5" style={{ color: next.isOverdue ? '#ef4444' : next.timeUntilMs < 30 * 60000 ? '#eab308' : 'var(--text-2)' }}>
-                        {next.isOverdue ? '⚠️ ' : ''}{next.label} — {fmtTime(next.suggestedTime)} ({next.timeUntilMs > 0 ? 'in ' + fmtDur(next.timeUntilMs) : fmtDur(Math.abs(next.timeUntilMs)) + ' ago'})
+                        {next.isOverdue ? 'OVERDUE: ' : ''}{next.label} — {fmtTime(next.suggestedTime)} ({next.timeUntilMs > 0 ? 'in ' + fmtDur(next.timeUntilMs) : fmtDur(Math.abs(next.timeUntilMs)) + ' ago'})
                       </p>
                     ) : (
                       <p className="text-[11px] mb-1.5" style={{ color: '#5eead4' }}>All done for this window</p>

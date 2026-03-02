@@ -817,11 +817,20 @@ function vcsWindowProgress(vcs, now) {
   return Math.max(0, Math.min(1, elapsed / windowMs));
 }
 
-// Format time as "HH:MM"
+// Format time as "HH:MM" with date context
 function fmtTime(iso) {
   if (!iso) return '--:--';
   const d = new Date(iso);
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const now = new Date();
+  const time = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const today = new Date(now); today.setHours(0,0,0,0);
+  const target = new Date(d); target.setHours(0,0,0,0);
+  const diff = (target - today) / 86400000;
+  if (diff === 0) return 'Today ' + time;
+  if (diff === -1) return 'Yesterday ' + time;
+  if (diff === 1) return 'Tomorrow ' + time;
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  return days[d.getDay()] + ' ' + time;
 }
 
 // Flip schedules: expanded always 25°C → 21d (3wk); stock varies by temp
@@ -2881,7 +2890,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                       <div className="mt-3 p-2.5 rounded-lg" style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.15)' }}>
                         <p className="text-[10px] font-semibold mb-2" style={{ color: '#5eead4' }}>Log virgins to bank?</p>
                         <div className="flex gap-2">
-                          {[3, 5, 10, 15].map(n => (
+                          {[1, 3, 5].map(n => (
                             <button key={n} onClick={() => {
                               setVirginBank(prev => ({ ...prev, [s.id]: (prev[s.id] || 0) + n }));
                               toast.add(`+${n} virgins banked for ${s.name}`);
@@ -4239,12 +4248,13 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross 
         {bankedStocks.length > 0 ? (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {bankedStocks.map(s => (
-              <div key={s.id} className="flex items-center gap-2 p-3 rounded-xl cursor-pointer transition-all active:scale-95" style={{ background: 'rgba(249,168,212,0.06)', border: '1px solid rgba(249,168,212,0.1)' }} onClick={() => onStartCross?.(s.id)}>
+              <div key={s.id} className="flex items-center gap-2 p-3 rounded-xl transition-all" style={{ background: 'rgba(249,168,212,0.06)', border: '1px solid rgba(249,168,212,0.1)' }}>
                 <span className="text-xl font-bold" style={{ color: '#f9a8d4' }}>{s.count}</span>
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 cursor-pointer active:scale-95" onClick={() => onStartCross?.(s.id)}>
                   <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
                   <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>♀ banked · tap to cross</p>
                 </div>
+                <button onClick={() => clearStock(s.id)} className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" style={{ color: 'var(--text-3)', background: 'transparent' }} title="Remove">✕</button>
               </div>
             ))}
           </div>
@@ -4350,6 +4360,7 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
                   <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{e.name}</p>
                   <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>{e.source === 'cross' ? '✕ cross' : '▪ stock'}</p>
                 </div>
+                <button onClick={() => clearEntry(e.id)} className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" style={{ color: 'var(--text-3)', background: 'transparent' }} title="Remove">✕</button>
               </div>
             ))}
           </div>

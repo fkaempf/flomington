@@ -3758,6 +3758,132 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
   );
 }
 
+function VcsSetup({ f, setF, toast }) {
+  const vcsActive = f.vcs?.enabled;
+  const [vcsStep, setVcsStep] = React.useState(0);
+  const [vcsO18, setVcsO18] = React.useState(true);
+  const [vcsCpd, setVcsCpd] = React.useState(2);
+  const [vcsSched, setVcsSched] = React.useState(null);
+  const [confirmDisable, setConfirmDisable] = React.useState(false);
+
+  React.useEffect(() => { if (vcsStep === 3 && !vcsSched) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsStep]);
+  React.useEffect(() => { if (vcsStep === 3) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsO18, vcsCpd]);
+
+  if (confirmDisable) return (
+    <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
+      <p className="text-sm font-semibold mb-2" style={{ color: '#fca5a5' }}>Disable Virgin Collection?</p>
+      <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Stock will remain expanded with normal flip schedule.</p>
+      <div className="flex gap-2">
+        <button onClick={() => { setF({ ...f, vcs: null }); setConfirmDisable(false); toast.add('VCS disabled'); }}
+          className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg" style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Yes, disable</button>
+        <button onClick={() => setConfirmDisable(false)}
+          className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg" style={{ background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>Cancel</button>
+      </div>
+    </div>
+  );
+
+  if (vcsActive && vcsStep === 0) return (
+    <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span style={{ color: '#a78bfa' }}>🔬</span>
+          <p className="text-xs font-semibold" style={{ color: '#a78bfa' }}>VCS Active</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px]" style={{ color: 'var(--text-3)' }}>{f.vcs.overnightAt18 ? '18°C' : '25°C'} · {f.vcs.collectionsPerDay}×/day</span>
+          <button onClick={() => setConfirmDisable(true)} className="px-2 py-1 text-[10px] rounded-lg" style={{ color: '#fca5a5', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.1)' }}>Stop</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (vcsStep === 0) return (
+    <button onClick={() => setVcsStep(1)} className="w-full mb-4 px-4 py-3 text-sm font-semibold rounded-xl transition-all active:scale-[0.98] cursor-pointer"
+      style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>
+      🔬 Enable Virgin Collection
+    </button>
+  );
+
+  return (
+    <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+      <p className="text-xs font-semibold mb-3" style={{ color: '#a78bfa' }}>VCS Setup — Step {vcsStep}/3</p>
+      {vcsStep >= 1 && (
+        <div className="mb-3">
+          <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Overnight temperature?</p>
+          <div className="grid grid-cols-2 gap-2 mb-1">
+            <div onClick={() => setVcsO18(true)} className={`loc-card cursor-pointer ${vcsO18 ? 'selected' : ''}`}>
+              <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>18°C overnight</p>
+              <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>16h virgin window</p>
+            </div>
+            <div onClick={() => setVcsO18(false)} className={`loc-card cursor-pointer ${!vcsO18 ? 'selected' : ''}`}>
+              <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>25°C (no move)</p>
+              <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>8h virgin window</p>
+            </div>
+          </div>
+          <p className="text-[10px] mb-2" style={{ color: 'var(--text-3)' }}>{vcsO18 ? '18°C extends the virgin window to ~16h and captures the dawn eclosion peak.' : 'Morning eclosers will have mated — must clear & discard first.'}</p>
+          {vcsStep === 1 && <button onClick={() => setVcsStep(2)} className="w-full px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>Next →</button>}
+        </div>
+      )}
+      {vcsStep >= 2 && (
+        <div className="mb-3">
+          <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Collections per day?</p>
+          <div className="grid grid-cols-2 gap-2 mb-1">
+            <div onClick={() => setVcsCpd(2)} className={`loc-card cursor-pointer ${vcsCpd === 2 ? 'selected' : ''}`}>
+              <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>2× daily</p>
+              <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>Recommended</p>
+            </div>
+            <div onClick={() => setVcsCpd(3)} className={`loc-card cursor-pointer ${vcsCpd === 3 ? 'selected' : ''}`}>
+              <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>3× daily</p>
+              <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>Rare genotypes</p>
+            </div>
+          </div>
+          {vcsStep === 2 && <button onClick={() => setVcsStep(3)} className="w-full px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>Next →</button>}
+        </div>
+      )}
+      {vcsStep === 3 && vcsSched && (
+        <div>
+          <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Schedule</p>
+          <div className="space-y-2 mb-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs" style={{ color: 'var(--text-2)' }}>Evening clear{vcsO18 ? ' → 18°C' : ''}</span>
+              <input type="time" value={vcsSched.eveningClear} onChange={e => setVcsSched({ ...vcsSched, eveningClear: e.target.value })}
+                className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs" style={{ color: vcsO18 ? '#5eead4' : '#fca5a5' }}>{vcsO18 ? 'Morning collect' : 'Morning clear + discard ⚠️'}</span>
+              <input type="time" value={vcsSched.morningCollect} onChange={e => setVcsSched({ ...vcsSched, morningCollect: e.target.value })}
+                className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+            </div>
+            {vcsCpd === 3 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs" style={{ color: '#5eead4' }}>Midday collect</span>
+                <input type="time" value={vcsSched.middayCollect || ''} onChange={e => setVcsSched({ ...vcsSched, middayCollect: e.target.value })}
+                  className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-xs" style={{ color: '#5eead4' }}>Afternoon collect + clear</span>
+              <input type="time" value={vcsSched.afternoonCollect} onChange={e => setVcsSched({ ...vcsSched, afternoonCollect: e.target.value })}
+                className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+            </div>
+          </div>
+          {!vcsO18 && <p className="text-[10px] mb-3 p-2 rounded-lg" style={{ background: 'rgba(239,68,68,0.06)', color: '#fca5a5' }}>⚠️ Without 18°C overnight, morning flies must be discarded — they are NOT reliable virgins.</p>}
+          <div className="flex gap-2">
+            <button onClick={() => {
+              const newVcs = makeVcs(vcsO18, vcsCpd, vcsSched);
+              setF({ ...f, vcs: newVcs });
+              setVcsStep(0);
+              toast.add('VCS enabled');
+              if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission();
+            }} className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.25)' }}>Start Virgin Collection</button>
+            <button onClick={() => setVcsStep(0)} className="px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_CATS, setCollections, currentUser, onTransfer, virginBank, setVirginBank, printList, setPrintList, onMassAdd, expBank, setExpBank }) {
   const [f, setF] = useState({});
   const [showNotes, setShowNotes] = useState(false);
@@ -3990,134 +4116,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
         <Field label="Notes"><Txt value={f.notes || ''} onChange={e => setF({ ...f, notes: e.target.value })} rows={2} /></Field>
       )}
       {/* VCS Setup */}
-      {!isNew && (f.variant || 'stock') === 'expanded' && (() => {
-        const vcsActive = f.vcs?.enabled;
-        const [vcsStep, setVcsStep] = React.useState(0); // 0=closed, 1=overnight, 2=collections, 3=schedule
-        const [vcsO18, setVcsO18] = React.useState(true);
-        const [vcsCpd, setVcsCpd] = React.useState(2);
-        const [vcsSched, setVcsSched] = React.useState(null);
-        const [confirmDisable, setConfirmDisable] = React.useState(false);
-
-        React.useEffect(() => { if (vcsStep === 3 && !vcsSched) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsStep]);
-        React.useEffect(() => { if (vcsStep === 3) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsO18, vcsCpd]);
-
-        if (confirmDisable) return (
-          <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
-            <p className="text-sm font-semibold mb-2" style={{ color: '#fca5a5' }}>Disable Virgin Collection?</p>
-            <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Stock will remain expanded with normal flip schedule.</p>
-            <div className="flex gap-2">
-              <button onClick={() => { setF({ ...f, vcs: null }); setConfirmDisable(false); toast.add('VCS disabled'); }}
-                className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg" style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Yes, disable</button>
-              <button onClick={() => setConfirmDisable(false)}
-                className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg" style={{ background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>Cancel</button>
-            </div>
-          </div>
-        );
-
-        if (vcsActive && vcsStep === 0) return (
-          <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span style={{ color: '#a78bfa' }}>🔬</span>
-                <p className="text-xs font-semibold" style={{ color: '#a78bfa' }}>VCS Active</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px]" style={{ color: 'var(--text-3)' }}>{f.vcs.overnightAt18 ? '18°C' : '25°C'} · {f.vcs.collectionsPerDay}×/day</span>
-                <button onClick={() => setConfirmDisable(true)} className="px-2 py-1 text-[10px] rounded-lg" style={{ color: '#fca5a5', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.1)' }}>Stop</button>
-              </div>
-            </div>
-          </div>
-        );
-
-        if (vcsStep === 0) return (
-          <button onClick={() => setVcsStep(1)} className="w-full mb-4 px-4 py-3 text-sm font-semibold rounded-xl transition-all active:scale-[0.98] cursor-pointer"
-            style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>
-            🔬 Enable Virgin Collection
-          </button>
-        );
-
-        return (
-          <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
-            <p className="text-xs font-semibold mb-3" style={{ color: '#a78bfa' }}>VCS Setup — Step {vcsStep}/3</p>
-
-            {vcsStep >= 1 && (
-              <div className="mb-3">
-                <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Overnight temperature?</p>
-                <div className="grid grid-cols-2 gap-2 mb-1">
-                  <div onClick={() => setVcsO18(true)} className={`loc-card cursor-pointer ${vcsO18 ? 'selected' : ''}`}>
-                    <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>18°C overnight</p>
-                    <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>16h virgin window</p>
-                  </div>
-                  <div onClick={() => setVcsO18(false)} className={`loc-card cursor-pointer ${!vcsO18 ? 'selected' : ''}`}>
-                    <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>25°C (no move)</p>
-                    <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>8h virgin window</p>
-                  </div>
-                </div>
-                <p className="text-[10px] mb-2" style={{ color: 'var(--text-3)' }}>{vcsO18 ? '18°C extends the virgin window to ~16h and captures the dawn eclosion peak.' : 'Morning eclosers will have mated — must clear & discard first.'}</p>
-                {vcsStep === 1 && <button onClick={() => setVcsStep(2)} className="w-full px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>Next →</button>}
-              </div>
-            )}
-
-            {vcsStep >= 2 && (
-              <div className="mb-3">
-                <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Collections per day?</p>
-                <div className="grid grid-cols-2 gap-2 mb-1">
-                  <div onClick={() => setVcsCpd(2)} className={`loc-card cursor-pointer ${vcsCpd === 2 ? 'selected' : ''}`}>
-                    <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>2× daily</p>
-                    <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>Recommended</p>
-                  </div>
-                  <div onClick={() => setVcsCpd(3)} className={`loc-card cursor-pointer ${vcsCpd === 3 ? 'selected' : ''}`}>
-                    <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>3× daily</p>
-                    <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>Rare genotypes</p>
-                  </div>
-                </div>
-                {vcsStep === 2 && <button onClick={() => setVcsStep(3)} className="w-full px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>Next →</button>}
-              </div>
-            )}
-
-            {vcsStep === 3 && vcsSched && (
-              <div>
-                <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Schedule</p>
-                <div className="space-y-2 mb-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs" style={{ color: 'var(--text-2)' }}>Evening clear{vcsO18 ? ' → 18°C' : ''}</span>
-                    <input type="time" value={vcsSched.eveningClear} onChange={e => setVcsSched({ ...vcsSched, eveningClear: e.target.value })}
-                      className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs" style={{ color: vcsO18 ? '#5eead4' : '#fca5a5' }}>{vcsO18 ? 'Morning collect' : 'Morning clear + discard ⚠️'}</span>
-                    <input type="time" value={vcsSched.morningCollect} onChange={e => setVcsSched({ ...vcsSched, morningCollect: e.target.value })}
-                      className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
-                  </div>
-                  {vcsCpd === 3 && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs" style={{ color: '#5eead4' }}>Midday collect</span>
-                      <input type="time" value={vcsSched.middayCollect || ''} onChange={e => setVcsSched({ ...vcsSched, middayCollect: e.target.value })}
-                        className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs" style={{ color: '#5eead4' }}>Afternoon collect + clear</span>
-                    <input type="time" value={vcsSched.afternoonCollect} onChange={e => setVcsSched({ ...vcsSched, afternoonCollect: e.target.value })}
-                      className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
-                  </div>
-                </div>
-                {!vcsO18 && <p className="text-[10px] mb-3 p-2 rounded-lg" style={{ background: 'rgba(239,68,68,0.06)', color: '#fca5a5' }}>⚠️ Without 18°C overnight, morning flies must be discarded — they are NOT reliable virgins.</p>}
-                <div className="flex gap-2">
-                  <button onClick={() => {
-                    const newVcs = makeVcs(vcsO18, vcsCpd, vcsSched);
-                    setF({ ...f, vcs: newVcs });
-                    setVcsStep(0);
-                    toast.add('VCS enabled');
-                    if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission();
-                  }} className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.25)' }}>Start Virgin Collection</button>
-                  <button onClick={() => setVcsStep(0)} className="px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Cancel</button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {!isNew && (f.variant || 'stock') === 'expanded' && <VcsSetup f={f} setF={setF} toast={toast} />}
 
       {!isNew && virginBank && setVirginBank && (
         <div className="mb-4 p-3 rounded-xl" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
@@ -4526,6 +4525,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
   }
 
   function loadDemo() {
+    demoMode.current = true;
     const d = makeDemoData();
     setStocks(d.stocks);
     setCrosses(d.crosses);
@@ -4533,7 +4533,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
     if (d.expBank && setExpBank) setExpBank(d.expBank);
     if (d.transfers && setTransfers) setTransfers(d.transfers);
     if (d.collections && setCollections) setCollections(d.collections);
-    toast.add('Demo data loaded');
+    toast.add('Demo data loaded — sync paused until reload');
   }
 
   function clearAll() {
@@ -5566,6 +5566,7 @@ function App() {
 
   const [pinVersion, setPinVersion] = useState(0);
   const initialPushBlocked = useRef(true);
+  const demoMode = useRef(false);
 
   // Pull from Supabase FIRST on load — blocks UI until done
   const hasPulled = useRef(false);
@@ -5625,7 +5626,7 @@ function App() {
   const pendingPush = useRef(false);
   const pushNow = useRef(() => {});
   useEffect(() => {
-    if (!sbConfigured || initialPushBlocked.current) return;
+    if (!sbConfigured || initialPushBlocked.current || demoMode.current) return;
     if (realtimeUpdateRef.current) { realtimeUpdateRef.current = false; if (!pendingPush.current) return; }
     pendingPush.current = true;
     clearTimeout(syncTimer.current);

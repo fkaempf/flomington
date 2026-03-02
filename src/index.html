@@ -4463,6 +4463,52 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
   );
 }
 
+function VirginNotifSettings({ notifyVirgins, setNotifyVirgins, toast }) {
+  const [vcsNotify, setVcsNotify] = useLS('flo-vcs-notify', true);
+  const [vcsRemindMin, setVcsRemindMin] = useLS('flo-vcs-remind-min', 15);
+  const [vcsOverdueMin, setVcsOverdueMin] = useLS('flo-vcs-overdue-min', 30);
+  const requestPerm = (onGranted) => {
+    if (!('Notification' in window)) { toast.add('Notifications not supported'); return; }
+    if (Notification.permission === 'denied') { toast.add('Notifications blocked — enable in browser settings'); return; }
+    if (Notification.permission === 'default') { Notification.requestPermission().then(p => { if (p === 'granted') onGranted(); else toast.add('Permission denied'); }); }
+    else onGranted();
+  };
+  return (
+    <div className="card p-5">
+      <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Virgin Collection Notifications</p>
+      <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Reminders for cross virgin windows and VCS schedules.</p>
+      <div className="space-y-3">
+        <button onClick={() => {
+          if (!notifyVirgins) requestPerm(() => { setNotifyVirgins(true); toast.add('Cross reminders enabled'); });
+          else { setNotifyVirgins(false); toast.add('Cross reminders disabled'); }
+        }}
+          className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-[0.97]"
+          style={notifyVirgins ? { background: 'rgba(34,197,94,0.1)', color: '#86efac', border: '1px solid rgba(34,197,94,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
+          {notifyVirgins ? 'Cross Reminders Enabled' : 'Enable Cross Reminders'}
+        </button>
+        <button onClick={() => {
+          if (!vcsNotify) requestPerm(() => { setVcsNotify(true); toast.add('VCS alerts enabled'); });
+          else { setVcsNotify(false); toast.add('VCS alerts disabled'); }
+        }}
+          className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-[0.97]"
+          style={vcsNotify ? { background: 'rgba(34,197,94,0.1)', color: '#86efac', border: '1px solid rgba(34,197,94,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
+          {vcsNotify ? 'VCS Alerts Enabled' : 'Enable VCS Alerts'}
+        </button>
+        {vcsNotify && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Remind before (min)">
+              <Inp type="number" min="1" max="60" value={vcsRemindMin} onChange={e => setVcsRemindMin(Math.max(1, parseInt(e.target.value) || 15))} />
+            </Field>
+            <Field label="Overdue after (min)">
+              <Inp type="number" min="5" max="120" value={vcsOverdueMin} onChange={e => setVcsOverdueMin(Math.max(5, parseInt(e.target.value) || 30))} />
+            </Field>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ========== SETTINGS SCREEN ========== */
 function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, notifyVirgins, setNotifyVirgins, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser }) {
   const fileRef = useRef(null);
@@ -4639,63 +4685,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       </div>
       )}
 
-      <div className="card p-5">
-        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Virgin Collection Reminders</p>
-        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Notifications at 9:00, 13:30, and 18:00 when you have active virgin crosses.</p>
-        <button onClick={() => {
-          if (!notifyVirgins) {
-            if (!('Notification' in window)) { toast.add('Notifications not supported'); return; }
-            if (Notification.permission === 'denied') { toast.add('Notifications blocked — enable in browser settings'); return; }
-            if (Notification.permission === 'default') {
-              Notification.requestPermission().then(p => {
-                if (p === 'granted') { setNotifyVirgins(true); toast.add('Reminders enabled'); }
-                else toast.add('Permission denied');
-              });
-            } else { setNotifyVirgins(true); toast.add('Reminders enabled'); }
-          } else { setNotifyVirgins(false); toast.add('Reminders disabled'); }
-        }}
-          className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-[0.97]"
-          style={notifyVirgins
-            ? { background: 'rgba(34,197,94,0.1)', color: '#86efac', border: '1px solid rgba(34,197,94,0.2)' }
-            : { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }
-          }>{notifyVirgins ? 'Enabled' : 'Enable Reminders'}</button>
-      </div>
-
-      <div className="card p-5">
-        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>VCS Notifications</p>
-        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Alerts for virgin collection schedules.</p>
-        {(() => {
-          const [vn, setVn] = useLS('flo-vcs-notify', true);
-          const [vr, setVr] = useLS('flo-vcs-remind-min', 15);
-          const [vo, setVo] = useLS('flo-vcs-overdue-min', 30);
-          return (
-            <div className="space-y-3">
-              <button onClick={() => {
-                if (!vn) {
-                  if (!('Notification' in window)) { toast.add('Notifications not supported'); return; }
-                  if (Notification.permission === 'denied') { toast.add('Notifications blocked'); return; }
-                  if (Notification.permission === 'default') { Notification.requestPermission().then(p => { if (p === 'granted') { setVn(true); toast.add('VCS notifications enabled'); } }); }
-                  else { setVn(true); toast.add('VCS notifications enabled'); }
-                } else { setVn(false); toast.add('VCS notifications disabled'); }
-              }}
-                className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-[0.97]"
-                style={vn ? { background: 'rgba(34,197,94,0.1)', color: '#86efac', border: '1px solid rgba(34,197,94,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
-                {vn ? 'VCS Notifications Enabled' : 'Enable VCS Notifications'}
-              </button>
-              {vn && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Remind before (min)">
-                    <Inp type="number" min="1" max="60" value={vr} onChange={e => setVr(Math.max(1, parseInt(e.target.value) || 15))} />
-                  </Field>
-                  <Field label="Overdue after (min)">
-                    <Inp type="number" min="5" max="120" value={vo} onChange={e => setVo(Math.max(5, parseInt(e.target.value) || 30))} />
-                  </Field>
-                </div>
-              )}
-            </div>
-          );
-        })()}
-      </div>
+      <VirginNotifSettings notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} toast={toast} />
 
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Calendar Export</p>

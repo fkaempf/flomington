@@ -2617,6 +2617,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
   const [flipCat, setFlipCat] = useState(null);
   const [flipDate, setFlipDate] = useState(today());
   const [homeEditStock, setHomeEditStock] = useState(null);
+  const [vcsBankPrompt, setVcsBankPrompt] = useState(null); // { stockId, stockName }
   const [selectedCrossId, setSelectedCrossId] = useState(initialCrossId || null);
   const activeRef = useRef(null);
   const healthRef = useRef(null);
@@ -2869,15 +2870,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         <>
                           <button onClick={() => {
                             logAction(next.type === 'collect_clear' ? 'clear' : 'collect', next.key);
-                            if (next.type === 'collect_clear' || next.type === 'collect') {
-                              // Prompt for virgin bank logging
-                              const count = prompt(`Log virgins to bank for ${s.name}? (Enter count or cancel)`);
-                              if (count && parseInt(count) > 0) {
-                                const n = parseInt(count);
-                                setVirginBank(prev => ({ ...prev, [s.id]: (prev[s.id] || 0) + n }));
-                                toast.add(`+${n} virgins banked for ${s.name}`);
-                              }
-                            }
+                            setVcsBankPrompt({ stockId: s.id, stockName: s.name });
                           }}
                             className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' }}>
@@ -2900,6 +2893,27 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                           {v.overnightAt18 ? 'Mark Cleared → 18°C' : 'Mark Cleared'}</button>
                       ) : null}
                     </div>
+
+                    {/* Inline virgin bank prompt */}
+                    {vcsBankPrompt?.stockId === s.id && (
+                      <div className="mt-3 p-2.5 rounded-lg" style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.15)' }}>
+                        <p className="text-[10px] font-semibold mb-2" style={{ color: '#5eead4' }}>Log virgins to bank?</p>
+                        <div className="flex gap-2">
+                          {[3, 5, 10, 15].map(n => (
+                            <button key={n} onClick={() => {
+                              setVirginBank(prev => ({ ...prev, [s.id]: (prev[s.id] || 0) + n }));
+                              toast.add(`+${n} virgins banked for ${s.name}`);
+                              setVcsBankPrompt(null);
+                            }}
+                              className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              style={{ background: 'rgba(94,234,212,0.1)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
+                          ))}
+                          <button onClick={() => setVcsBankPrompt(null)}
+                            className="px-2 py-1.5 text-xs rounded-lg cursor-pointer"
+                            style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Skip</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

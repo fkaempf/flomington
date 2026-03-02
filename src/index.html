@@ -3771,6 +3771,175 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross 
   );
 }
 
+/* ========== EXP SCREEN ========== */
+function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
+  const [search, setSearch] = useState('');
+  const [logMode, setLogMode] = useState('cross');
+
+  const totalM = Object.values(expBank).reduce((s, e) => s + (e.m || 0), 0);
+  const totalF = Object.values(expBank).reduce((s, e) => s + (e.f || 0), 0);
+
+  const bankedEntries = useMemo(() => {
+    return Object.entries(expBank)
+      .filter(([, v]) => (v.m || 0) + (v.f || 0) > 0)
+      .map(([id, v]) => {
+        const src = v.source === 'cross'
+          ? crosses.find(c => c.id === id)
+          : stocks.find(s => s.id === id);
+        const name = v.source === 'cross'
+          ? (src ? `${(stocks.find(s => s.id === src.parentA)?.name || '?')} × ${(stocks.find(s => s.id === src.parentB)?.name || '?')}` : id)
+          : (src?.name || id);
+        return { id, ...v, name, srcObj: src };
+      })
+      .sort((a, b) => ((b.m || 0) + (b.f || 0)) - ((a.m || 0) + (a.f || 0)));
+  }, [expBank, stocks, crosses]);
+
+  function addExp(sourceId, sex, n, source) {
+    setExpBank(prev => {
+      const cur = prev[sourceId] || { m: 0, f: 0, source };
+      return { ...prev, [sourceId]: { ...cur, [sex]: Math.max(0, (cur[sex] || 0) + n) } };
+    });
+    toast.add(`${n > 0 ? '+' : ''}${n} ${sex === 'm' ? '♂' : '♀'} logged`);
+  }
+
+  function clearEntry(sourceId) {
+    setExpBank(prev => { const next = { ...prev }; delete next[sourceId]; return next; });
+    toast.add('Cleared');
+  }
+
+  const eligibleCrosses = crosses.filter(c =>
+    ['collecting progeny', 'screening', 'ripening', 'done'].includes(c.status)
+  );
+
+  return (
+    <div>
+      {/* Overview Card */}
+      <div className="card p-5 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>Experimental Animals</p>
+          <span className="text-xs" style={{ color: 'var(--text-3)' }}>{totalM}♂ {totalF}♀ total</span>
+        </div>
+        {bankedEntries.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {bankedEntries.map(e => (
+              <div key={e.id} className="flex items-center gap-2 p-3 rounded-xl" style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.1)' }}>
+                <div className="text-center">
+                  <span className="text-lg font-bold" style={{ color: '#5eead4' }}>{(e.m || 0) + (e.f || 0)}</span>
+                  <p className="text-[9px]" style={{ color: 'var(--text-3)' }}>{e.m || 0}♂ {e.f || 0}♀</p>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{e.name}</p>
+                  <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>{e.source === 'cross' ? '✕ cross' : '▪ stock'}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-center py-3" style={{ color: 'var(--text-3)' }}>No experimental animals logged yet</p>
+        )}
+      </div>
+
+      {/* Log Section */}
+      <div className="flex items-center gap-2 mb-4">
+        <p className="section-header flex-1" style={{ margin: 0 }}>Log Animals</p>
+        <div className="flex gap-1">
+          <button onClick={() => setLogMode('cross')} className="px-3 py-1 text-xs font-semibold rounded-lg cursor-pointer"
+            style={logMode === 'cross' ? { background: 'rgba(94,234,212,0.15)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Crosses</button>
+          <button onClick={() => setLogMode('stock')} className="px-3 py-1 text-xs font-semibold rounded-lg cursor-pointer"
+            style={logMode === 'stock' ? { background: 'rgba(94,234,212,0.15)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Stocks</button>
+        </div>
+      </div>
+      <Inp placeholder={logMode === 'cross' ? 'Search crosses...' : 'Search stocks...'} value={search} onChange={e => setSearch(e.target.value)} className="mb-4" />
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
+        {logMode === 'cross' ? (
+          eligibleCrosses.filter(c => {
+            if (!search) return true;
+            const q = search.toLowerCase();
+            const pA = stocks.find(s => s.id === c.parentA);
+            const pB = stocks.find(s => s.id === c.parentB);
+            return [pA?.name, pB?.name, c.notes || ''].some(x => (x || '').toLowerCase().includes(q));
+          }).map(c => {
+            const pA = stocks.find(s => s.id === c.parentA);
+            const pB = stocks.find(s => s.id === c.parentB);
+            const label = `${pA?.name || '?'} × ${pB?.name || '?'}`;
+            const entry = expBank[c.id] || { m: 0, f: 0 };
+            return (
+              <div key={c.id} className="card p-4">
+                <div className="flex items-center gap-3 mb-1">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{label}</span>
+                    {((entry.m || 0) + (entry.f || 0)) > 0 && (
+                      <span className="badge ml-2" style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>{entry.m || 0}♂ {entry.f || 0}♀</span>
+                    )}
+                  </div>
+                  {((entry.m || 0) + (entry.f || 0)) > 0 && (
+                    <button onClick={() => clearEntry(c.id)} className="text-xs cursor-pointer" style={{ color: 'var(--text-3)' }}>clear</button>
+                  )}
+                </div>
+                <p className="text-[10px] mb-3" style={{ color: 'var(--text-3)' }}>{c.status}</p>
+                <div className="mb-2">
+                  <p className="text-[10px] mb-1" style={{ color: '#93c5fd' }}>♂ Males</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => addExp(c.id, 'm', -1, 'cross')} className="qlog-btn flex-1" disabled={(entry.m || 0) <= 0} style={(entry.m || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                    {[1, 3, 5].map(n => <button key={n} onClick={() => addExp(c.id, 'm', n, 'cross')} className="qlog-btn flex-1">+{n}</button>)}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] mb-1" style={{ color: '#f9a8d4' }}>♀ Females</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => addExp(c.id, 'f', -1, 'cross')} className="qlog-btn flex-1" disabled={(entry.f || 0) <= 0} style={(entry.f || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                    {[1, 3, 5].map(n => <button key={n} onClick={() => addExp(c.id, 'f', n, 'cross')} className="qlog-btn flex-1">+{n}</button>)}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          stocks.filter(s => !search || [s.name, s.genotype || ''].some(x => x.toLowerCase().includes(search.toLowerCase()))).map(s => {
+            const entry = expBank[s.id] || { m: 0, f: 0 };
+            return (
+              <div key={s.id} className="card p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
+                    {((entry.m || 0) + (entry.f || 0)) > 0 && (
+                      <span className="badge ml-2" style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>{entry.m || 0}♂ {entry.f || 0}♀</span>
+                    )}
+                  </div>
+                  {((entry.m || 0) + (entry.f || 0)) > 0 && (
+                    <button onClick={() => clearEntry(s.id)} className="text-xs cursor-pointer" style={{ color: 'var(--text-3)' }}>clear</button>
+                  )}
+                </div>
+                <div className="mb-2">
+                  <p className="text-[10px] mb-1" style={{ color: '#93c5fd' }}>♂ Males</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => addExp(s.id, 'm', -1, 'stock')} className="qlog-btn flex-1" disabled={(entry.m || 0) <= 0} style={(entry.m || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                    {[1, 3, 5].map(n => <button key={n} onClick={() => addExp(s.id, 'm', n, 'stock')} className="qlog-btn flex-1">+{n}</button>)}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] mb-1" style={{ color: '#f9a8d4' }}>♀ Females</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => addExp(s.id, 'f', -1, 'stock')} className="qlog-btn flex-1" disabled={(entry.f || 0) <= 0} style={(entry.f || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                    {[1, 3, 5].map(n => <button key={n} onClick={() => addExp(s.id, 'f', n, 'stock')} className="qlog-btn flex-1">+{n}</button>)}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {(logMode === 'cross' ? eligibleCrosses.length : stocks.length) === 0 && (
+        <div className="text-center py-16">
+          <p className="text-sm" style={{ color: 'var(--text-3)' }}>{logMode === 'cross' ? 'No crosses in screening/collecting stage yet' : 'Add stocks first'}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ========== SETTINGS SCREEN ========== */
 function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setTransfers, setCollections, notifyVirgins, setNotifyVirgins, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser }) {
   const fileRef = useRef(null);
@@ -4801,6 +4970,7 @@ function App() {
   const [bgEffect, setBgEffect] = useLS('flo-bg', 'grainient');
   useEffect(() => { if (localStorage.getItem('flo-bg') === '"none"') { setBgEffect('grainient'); } }, []);
   const [virginBank, setVirginBank] = useLS(`flo-virgins-${currentUser}`, {});
+  const [expBank, setExpBank] = useLS(`flo-exp-${currentUser}`, {});
   const [virginsPerCross, setVirginsPerCross] = useLS('flo-vpc', 5);
   const [transfers, setTransfers] = useLS('flo-transfers', []);
   const [collections, setCollections] = useLS('flo-collections', DEFAULT_CATS);
@@ -5062,6 +5232,7 @@ function App() {
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} />}
           {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
+          {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} />}
           {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setTransfers={setTransfers} setCollections={setCollections} notifyVirgins={notifyVirgins} setNotifyVirgins={setNotifyVirgins} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} />}
         </div>
       </main>
@@ -5092,6 +5263,12 @@ function App() {
             <circle cx="12" cy="8" r="5" /><path d="M12 13v8" /><path d="M9 18h6" />
           </svg>
           <span style={{ color: tab === 'virgins' ? '#f9a8d4' : 'var(--text-3)' }}>Virgins</span>
+        </div>
+        <div onClick={() => setTab('exp')} className={`nav-item ${tab === 'exp' ? 'active' : ''}`}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={tab === 'exp' ? '#5eead4' : '#52525b'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 3h6v7l4 9H5l4-9V3z"/><line x1="9" y1="3" x2="15" y2="3"/>
+          </svg>
+          <span style={{ color: tab === 'exp' ? '#5eead4' : 'var(--text-3)' }}>Exp</span>
         </div>
       </nav>
 

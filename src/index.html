@@ -2174,7 +2174,14 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
         {/* Virgin collection progress — only during collecting */}
         {cross.status === 'collecting virgins' && (
           <div className="mb-5">
-            <p className="section-header">Virgin Collection</p>
+            <div className="flex items-center justify-between">
+              <p className="section-header">Virgin Collection</p>
+              {cross.overnightAt18 !== undefined && (
+                <span className="text-[10px] px-2 py-0.5 rounded-md" style={{ background: cross.overnightAt18 ? 'rgba(139,92,246,0.1)' : 'rgba(148,163,184,0.1)', color: cross.overnightAt18 ? '#a78bfa' : 'var(--text-3)' }}>
+                  {cross.overnightAt18 ? '18°C overnight' : 'Room temp'}
+                </span>
+              )}
+            </div>
             {(() => {
               const parentStock = stocks.find(s => s.id === cross.parentA);
               if (!parentStock?.vcs?.enabled) return null;
@@ -2447,11 +2454,12 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
   const [notes, setNotes] = useState('');
   const [showNotes, setShowNotes] = useState(false);
   const [search, setSearch] = useState('');
+  const [overnightAt18, setOvernightAt18] = useState(true);
 
   useEffect(() => {
     if (open) {
       setTemperature('25inc');
-      setExperimentType(''); setNotes(''); setShowNotes(false); setSearch('');
+      setExperimentType(''); setNotes(''); setShowNotes(false); setSearch(''); setOvernightAt18(true);
       if (preselectedVirgin) {
         const stock = stocks.find(s => s.id === preselectedVirgin);
         setParentA(stock || null);
@@ -2484,7 +2492,7 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
 
     const cross = {
       id: uid(), parentA: parentA.id, parentB: parentB.id, temperature,
-      setupDate: today(), status: initialStatus, notes,
+      setupDate: today(), status: initialStatus, notes, overnightAt18,
       targetCount: parseInt(targetCount) || 0, collected: [], vials: [],
       manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
       crossType: 'simple', parentCrossId: '',
@@ -2607,6 +2615,16 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
                 <option value="other">Other</option>
               </select>
             </Field>
+          </div>
+          <div className="mb-3">
+            <button onClick={() => setOvernightAt18(!overnightAt18)}
+              className="w-full px-4 py-2.5 text-xs font-semibold rounded-xl transition-all active:scale-[0.97] cursor-pointer"
+              style={overnightAt18
+                ? { background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }
+                : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
+              {overnightAt18 ? '18°C overnight — virgins in morning' : 'Room temp overnight — discard in morning'}
+            </button>
+            <p className="text-[10px] mt-1 text-center" style={{ color: 'var(--text-3)' }}>{overnightAt18 ? '16h virgin window' : '8h virgin window'}</p>
           </div>
           {!showNotes ? (
             <button onClick={() => setShowNotes(true)} className="text-xs mb-4 touch" style={{ color: 'var(--accent-2)' }}>+ add notes</button>

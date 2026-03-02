@@ -723,11 +723,13 @@ function computeDeadline(clearIso, o18) {
 function computeNextActions(vcs, now) {
   if (!vcs?.enabled) return [];
   now = now || new Date();
-  const { overnightAt18, collectionsPerDay, schedule, lastClearTime, todayActions } = vcs;
-  const windowMs = getVirginWindowH(overnightAt18) * 3600000;
+  const { overnightAt18, collectionsPerDay, schedule, lastClearTime, lastClearTemp, todayActions } = vcs;
+  // Use lastClearTemp for current cycle behavior (allows "No, room temp" override)
+  const cycleAt18 = lastClearTemp ? lastClearTemp === '18' : overnightAt18;
+  const windowMs = getVirginWindowH(cycleAt18) * 3600000;
 
   // Build the ordered action sequence for one cycle
-  const isMorningCollect = overnightAt18;
+  const isMorningCollect = cycleAt18;
   const actions = [];
   actions.push({ key: 'evening', type: 'clear', label: overnightAt18 ? 'Clear → 18°C' : 'Clear', scheduled: schedule.eveningClear });
   actions.push({ key: 'morning', type: isMorningCollect ? 'collect' : 'clear_discard',
@@ -816,7 +818,8 @@ function vcsWindowProgress(vcs, now) {
   if (!vcs?.lastClearTime) return 0;
   now = now || new Date();
   const clearMs = new Date(vcs.lastClearTime).getTime();
-  const windowMs = getVirginWindowH(vcs.overnightAt18) * 3600000;
+  const cycleAt18 = vcs.lastClearTemp ? vcs.lastClearTemp === '18' : vcs.overnightAt18;
+  const windowMs = getVirginWindowH(cycleAt18) * 3600000;
   const elapsed = now.getTime() - clearMs;
   return Math.max(0, Math.min(1, elapsed / windowMs));
 }
@@ -2804,7 +2807,8 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                 const actions = computeNextActions(v, now);
                 const next = actions[0];
                 const progress = vcsWindowProgress(v, now);
-                const deadline = v.lastClearTime ? computeDeadline(v.lastClearTime, v.overnightAt18) : null;
+                const cycleAt18 = v.lastClearTemp ? v.lastClearTemp === '18' : v.overnightAt18;
+                const deadline = v.lastClearTime ? computeDeadline(v.lastClearTime, cycleAt18) : null;
                 const doneCount = (v.todayActions || []).filter(a => a.type === 'collect').length;
                 const totalCollects = v.collectionsPerDay;
 
@@ -2818,7 +2822,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                   if (type === 'clear' || type === 'clear_discard') {
                     newVcs.lastClearTime = action.time;
                     newVcs.lastClearTemp = temp || (v.overnightAt18 ? '18' : '25');
-                    newVcs.virginDeadline = computeDeadline(action.time, v.overnightAt18);
+                    newVcs.virginDeadline = computeDeadline(action.time, newVcs.lastClearTemp === '18');
                     newVcs.todayActions = [action]; // Reset for new window
                   }
                   markEdited(s.id);

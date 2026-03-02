@@ -2707,14 +2707,32 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
     }));
   }, [crosses]);
 
-  // Active tasks: crosses approaching a transition
-  const activeTasks = useMemo(() => activeCrosses.filter(c =>
-    c.status === 'collecting virgins' ||
-    c.status === 'collecting progeny' ||
-    c.status === 'ripening' ||
-    (c.status === 'waiting for virgins' && -dFromNow(c.setupDate) >= 7) ||
-    (c.status === 'waiting for progeny' && c.waitStartDate && -dFromNow(c.waitStartDate) >= 7)
-  ), [activeCrosses]);
+  // Active tasks: only crosses that need action RIGHT NOW
+  const activeTasks = useMemo(() => {
+    const now = new Date();
+    return activeCrosses.filter(c => {
+      if (c.status === 'collecting virgins') {
+        // With VCS: only show if next action is within 20min or overdue
+        if (c.vcs?.enabled) {
+          const actions = computeNextActions(c.vcs, now);
+          const next = actions[0];
+          if (!next) return false;
+          return next.timeUntilMs <= 20 * 60000 || next.isPastDeadline;
+        }
+        return true; // no VCS: always show
+      }
+      if (c.status === 'collecting progeny') return true;
+      if (c.status === 'ripening') {
+        if (!c.ripeningStartDate) return false;
+        const cd = crossDetect(c, stocks);
+        const rDays = -dFromNow(c.ripeningStartDate);
+        return rDays >= (cd.o ? 3 : 5);
+      }
+      if (c.status === 'waiting for virgins') return -dFromNow(c.setupDate) >= 9;
+      if (c.status === 'waiting for progeny') return c.waitStartDate && -dFromNow(c.waitStartDate) >= 9;
+      return false;
+    });
+  }, [activeCrosses, stocks]);
 
   const actionSummary = useMemo(() => {
     let overdue = 0;

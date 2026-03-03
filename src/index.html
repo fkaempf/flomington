@@ -3337,7 +3337,10 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                 <div key={s.id} className="card p-4 cursor-pointer" style={{ borderColor: 'rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.04)' }} onClick={() => setHomeEditStock({ ...s })}>
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                        {((s.copies || 1) > 1 || myStocks.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'))) && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>#{s.copies || 1}</span>}
+                      </div>
                       <p className="text-xs mt-0.5" style={{ color: '#fca5a5' }}>{-dFromNow(s.lastFlipped || s.createdAt)}d — needs flip</p>
                     </div>
                     <button onClick={(e) => { e.stopPropagation(); flipStock(s.id); }}

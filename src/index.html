@@ -5452,7 +5452,7 @@ setTimeout(function(){ window.print(); }, 500);
             className="compact px-2 py-1.5 font-semibold rounded-lg"
             style={{ color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)', appearance: 'auto' }}>
             {Object.entries(LABEL_FORMATS).map(([k, v]) => (
-              <option key={k} value={k}>{k} ({v.labelW}x{v.labelH}mm)</option>
+              <option key={k} value={k}>{k} ({v.labelW}x{v.labelH}mm, {v.cols * v.rows}/page)</option>
             ))}
           </select>
           <div onClick={() => setShowQR(!showQR)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"

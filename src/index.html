@@ -5336,10 +5336,11 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     const qrBase = (window.location.origin + window.location.pathname).replace('https://', '');
 
     // Build unified label data
+    const esc = t => t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const allLabels = [];
     stockItems.forEach(s => {
       const hasSibling = stocks.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'));
-      allLabels.push({ id: 's-' + s.id, name: s.name + (s.vcs?.enabled ? ' [VCS]' : ''), copies: hasSibling ? (s.copies || 1) : 0, line2: s.genotype || '', line3: '', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
+      allLabels.push({ id: 's-' + s.id, name: esc(s.name + (s.vcs?.enabled ? ' [VCS]' : '')), copies: hasSibling ? (s.copies || 1) : 0, line2: esc(s.genotype || ''), line3: '', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
     });
     crossItems.forEach(c => {
       const info = crossLabelText(c, stocks);

@@ -4411,8 +4411,8 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
       )}
       {!isNew && (
         <Field label="Last Flipped">
-          <Inp type="date" value={f.lastFlipped || ''} onChange={e => setF({ ...f, lastFlipped: e.target.value })} />
-          {f.lastFlipped && <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>{new Date(f.lastFlipped + 'T00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} ({-dFromNow(f.lastFlipped)}d ago) — next flip in {Math.max(0, getFlipDays(f) - (-dFromNow(f.lastFlipped)))}d</p>}
+          <Inp type="date" value={normDate(f.lastFlipped)} onChange={e => setF({ ...f, lastFlipped: e.target.value })} />
+          {f.lastFlipped && <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>{toDate(f.lastFlipped).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} ({-dFromNow(f.lastFlipped)}d ago) — next flip in {Math.max(0, getFlipDays(f) - (-dFromNow(f.lastFlipped)))}d</p>}
         </Field>
       )}
       {!f.maintainer ? (

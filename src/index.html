@@ -627,7 +627,8 @@ const tempFull = t => ({ '25inc': '25°C Incubator', '25room': '25°C Room', '18
 
 const TEMPS = ['25inc', '25room', '18', 'RT'];
 const DEFAULT_CATS = ['No Collection'];
-const USERS = ['Flo', 'Bella', 'Seba', 'Catherine', 'Tomke', 'Shahar', 'Myrto'];
+const USERS = ['Flo', 'Bella', 'Seba', 'Catherine', 'Tomke', 'Shahar', 'Myrto', 'Armin'];
+const READ_ONLY_USERS = ['Armin'];
 const STOCK_SOURCES = ['Bloomington', 'VDRC', 'Kyoto', 'Other'];
 function guessSource(name) {
   if (!name) return null;
@@ -1958,6 +1959,7 @@ function CircleProgress({ value, max, size = 40, stroke = 3, countUp }) {
 
 /* ========== CROSS CARD (COMPACT) ========== */
 function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank, virginsPerCross, forceOpen, currentUser, onTransfer, printListCrosses, setPrintListCrosses, expBank, setExpBank }) {
+  const isReadOnly = READ_ONLY_USERS.includes(currentUser);
   const [detailOpen, setDetailOpen] = useState(false);
   useEffect(() => { if (forceOpen) setDetailOpen(true); }, [forceOpen]);
   const [editing, setEditing] = useState(false);
@@ -2208,11 +2210,11 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
                 <p className="text-xs" style={{ color: 'var(--text-3)' }}>{Math.round((vCollected / vTarget) * 100)}% collected</p>
               </div>
             </div>
-            <div className="flex gap-2">
+            {!isReadOnly && <div className="flex gap-2">
               {[1, 3, 5].map(n => (
                 <button key={n} onClick={() => logVirgin(n)} className="qlog-btn flex-1">+{n}</button>
               ))}
-            </div>
+            </div>}
           </div>
         )}
 
@@ -2227,7 +2229,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
                 <p className="text-xs" style={{ color: 'var(--text-3)' }}>{Math.round((tot / cross.targetCount) * 100)}% collected</p>
               </div>
             </div>
-            {isCollecting && !isDone && (
+            {isCollecting && !isDone && !isReadOnly && (
               <div className="flex gap-2">
                 {[1, 5, 10].map(n => (
                   <button key={n} onClick={() => quickLog(n)} className="qlog-btn flex-1">+{n}</button>
@@ -2258,6 +2260,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
                 <p className="text-xs font-semibold" style={{ color: '#5eead4' }}>Exp Bank</p>
                 <p className="text-xs" style={{ color: 'var(--text-3)' }}>{entry.m || 0}♂ {entry.f || 0}♀</p>
               </div>
+              {!isReadOnly && <>
               <div className="mb-2">
                 <p className="text-[10px] mb-1" style={{ color: '#93c5fd' }}>♂</p>
                 <div className="flex gap-1">
@@ -2272,6 +2275,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
                   {[1, 3, 5].map(n => <button key={n} onClick={(e) => { e.stopPropagation(); setExpBank(prev => { const cur = prev[cross.id] || { m: 0, f: 0, source: 'cross' }; return { ...prev, [cross.id]: { ...cur, f: (cur.f || 0) + n } }; }); }} className="qlog-btn flex-1">+{n}</button>)}
                 </div>
               </div>
+              </>}
             </div>
           );
         })()}
@@ -2302,6 +2306,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
 
         {/* Actions */}
         <div className="grid gap-2">
+          {!isReadOnly && (<>
           {!isDone ? (
             <Btn v="advance" onClick={advance} className="w-full">Advance → {(() => { let ns = nextSt(cross.status); if (ns === 'ripening' && !cd.o && !cd.c) ns = nextSt(ns); return ns; })()}</Btn>
           ) : (
@@ -2343,7 +2348,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
             <div className="mt-3">
               <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: 'var(--text-3)' }}>Transfer ownership</p>
               <div className="flex flex-wrap gap-1.5">
-                {USERS.filter(u => u !== currentUser).map(u => (
+                {USERS.filter(u => u !== currentUser && !READ_ONLY_USERS.includes(u)).map(u => (
                   <button key={u} onClick={() => { onTransfer({ type: 'cross', itemId: cross.id, name: cl(cross, stocks), to: u }); setDetailOpen(false); }}
                     className="px-3 py-1.5 text-xs rounded-lg transition-all active:scale-95 cursor-pointer"
                     style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>{u}</button>
@@ -2351,6 +2356,8 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
               </div>
             </div>
           )}
+          </>)}
+          {isReadOnly && <Btn v="s" onClick={exportCal} className="w-full">Export Calendar</Btn>}
         </div>
       </Modal>
 
@@ -2653,6 +2660,7 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
 
 /* ========== HOME SCREEN ========== */
 function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross, virginBank, setVirginBank, virginsPerCross, currentUser, transfers, onAcceptTransfer, onDeclineTransfer, onTransfer, STOCK_CATS, sentTransfers, onDismissTransfer, printListCrosses, setPrintListCrosses, initialCrossId, expBank, setExpBank }) {
+  const isReadOnly = READ_ONLY_USERS.includes(currentUser);
   const [showCompleted, setShowCompleted] = useState(false);
   const [flipCat, setFlipCat] = useState(null);
   const [flipDate, setFlipDate] = useState(today());
@@ -2665,7 +2673,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
   const activeRef = useRef(null);
   const healthRef = useRef(null);
 
-  const myCrosses = useMemo(() => crosses.filter(c => !c.owner || c.owner === currentUser), [crosses, currentUser]);
+  const myCrosses = useMemo(() => isReadOnly ? crosses : crosses.filter(c => !c.owner || c.owner === currentUser), [crosses, currentUser, isReadOnly]);
   const activeCrosses = useMemo(() => {
     const urgent = ['collecting virgins', 'collecting progeny', 'ripening'];
     return myCrosses.filter(c => c.status !== 'done').sort((a, b) => urgent.includes(b.status) - urgent.includes(a.status));
@@ -2788,7 +2796,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
   return (
     <div className="pb-8">
       {/* Transfer notifications */}
-      {transfers && transfers.length > 0 && (
+      {!isReadOnly && transfers && transfers.length > 0 && (
         <div className="mb-6 space-y-2">
           {transfers.map(t => (
             <div key={t.id} className="card p-4" style={{ borderColor: 'rgba(139,92,246,0.2)', background: 'rgba(139,92,246,0.06)' }}>
@@ -2899,7 +2907,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
 
       {/* VCS Dashboard + Virgin-phase crosses */}
       {(() => {
-        const vcsStocks = stocks.filter(s => s.vcs?.enabled && s.maintainer === currentUser && !stockTags(s).includes('Dead'));
+        const vcsStocks = stocks.filter(s => s.vcs?.enabled && (isReadOnly || s.maintainer === currentUser) && !stockTags(s).includes('Dead'));
         const virginCrosses = myCrosses.filter(c => c.status === 'collecting virgins' || c.status === 'waiting for virgins');
         if (!vcsStocks.length && !virginCrosses.length) return null;
         const now = new Date();
@@ -3044,7 +3052,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         )}
 
                         {/* Action buttons - only show when next action is within 20min or overdue */}
-                        {(isPastDeadline || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
+                        {!isReadOnly && (isPastDeadline || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
                           {isPastDeadline ? (
                             <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next?.key || 'evening', type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next?.key || 'evening'); }}
                               className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
@@ -3081,7 +3089,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         </div>}
 
                         {/* 18°C confirmation */}
-                        {crossVcs18Confirm?.crossId === c.id && (
+                        {!isReadOnly && crossVcs18Confirm?.crossId === c.id && (
                           <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
                             <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#a78bfa' }}>Moved to 18°C?</p>
                             <div className="flex gap-1.5">
@@ -3096,7 +3104,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         )}
 
                         {/* Inline virgin log prompt - logs to cross.virginsCollected */}
-                        {crossVcsBankPrompt?.crossId === c.id && (
+                        {!isReadOnly && crossVcsBankPrompt?.crossId === c.id && (
                           <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.15)' }}>
                             <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#5eead4' }}>Log virgins collected?</p>
                             <div className="flex gap-1.5">
@@ -3202,7 +3210,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                     )}
 
                     {/* Action buttons - only show when next action is within 20min or overdue */}
-                    {(isPastDeadline || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
+                    {!isReadOnly && (isPastDeadline || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
                       {isPastDeadline ? (
                         <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next?.key || 'evening', type: 'clear_discard' }); else logAction('clear_discard', next?.key || 'evening'); }}
                           className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
@@ -3239,7 +3247,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                     </div>}
 
                     {/* 18°C confirmation */}
-                    {vcs18Confirm?.stockId === s.id && (
+                    {!isReadOnly && vcs18Confirm?.stockId === s.id && (
                       <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
                         <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#a78bfa' }}>Moved to 18°C?</p>
                         <div className="flex gap-1.5">
@@ -3254,7 +3262,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                     )}
 
                     {/* Inline virgin bank prompt */}
-                    {vcsBankPrompt?.stockId === s.id && (
+                    {!isReadOnly && vcsBankPrompt?.stockId === s.id && (
                       <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.15)' }}>
                         <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#5eead4' }}>Log virgins to bank?</p>
                         <div className="flex gap-1.5">
@@ -3309,7 +3317,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
       {/* Stock Collections - show categories with stocks due for flipping */}
       {(() => {
         // Individual stocks: expanded + "No Collection" (only show if maintainer matches)
-        const myStocks = stocks.filter(s => (!s.maintainer || s.maintainer === currentUser) && !stockTags(s).includes('Dead'));
+        const myStocks = stocks.filter(s => (isReadOnly || !s.maintainer || s.maintainer === currentUser) && !stockTags(s).includes('Dead'));
         const dueIndividual = myStocks.filter(s => (s.category || 'No Collection') === 'No Collection').filter(s => {
           const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
           return age !== null && age >= getFlipDays(s);
@@ -3420,29 +3428,29 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                             </div>
                             <p className="text-[11px]" style={{ color: '#fca5a5' }}>{age}d / {getFlipDays(s)}d</p>
                           </button>
-                          <button onClick={() => { flipStock(s.id); }}
+                          {!isReadOnly && <button onClick={() => { flipStock(s.id); }}
                             className="touch px-3 py-1 text-xs font-semibold rounded-lg transition-all active:scale-95 shrink-0 ml-2"
                             style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
                             Flip
-                          </button>
+                          </button>}
                         </div>
                       );
                     })}
                   </div>
                 </div>
               )}
-              <Field label="Or set date for all">
+              {!isReadOnly && <Field label="Or set date for all">
                 <Inp type="date" value={flipDate} onChange={e => setFlipDate(e.target.value)} />
-              </Field>
+              </Field>}
               <div className="flex gap-2 mt-2">
-                <Btn onClick={() => {
+                {!isReadOnly && <Btn onClick={() => {
                   const ids = new Set(catStocks.map(s => s.id));
                   ids.forEach(id => markEdited(id));
                   setStocks(p => p.map(s => ids.has(s.id) ? { ...s, lastFlipped: flipDate } : s));
                   toast.add(`${label} flipped on ${fmt(flipDate)}`);
                   setFlipCat(null);
-                }} className="flex-1">Set All Flipped</Btn>
-                <Btn v="s" onClick={() => setFlipCat(null)}>Cancel</Btn>
+                }} className="flex-1">Set All Flipped</Btn>}
+                <Btn v="s" onClick={() => setFlipCat(null)} className={isReadOnly ? 'w-full' : ''}>Cancel</Btn>
               </div>
             </div>
           );
@@ -3455,9 +3463,10 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
 
 /* ========== STOCKS SCREEN ========== */
 function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, printListCrosses, onOpenPrint, onBulkActive, expBank, setExpBank }) {
+  const isReadOnly = READ_ONLY_USERS.includes(currentUser);
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState(() => initialStockId ? 'all' : 'all');
-  const [showAll, setShowAll] = useState(() => !!initialStockId);
+  const [showAll, setShowAll] = useState(() => isReadOnly || !!initialStockId);
   const [accessDenied, setAccessDenied] = useState(null);
   const [editing, setEditing] = useState(() => {
     if (initialStockId) {
@@ -3617,7 +3626,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       {/* Toolbar row */}
       <div className="flex items-center gap-2 mb-3">
         {/* Mine / All segmented control */}
-        <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
+        {!isReadOnly && <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
           <button onClick={() => setShowAll(false)}
             className="px-3 py-1.5 text-[11px] font-semibold transition-all active:scale-95"
             style={!showAll
@@ -3631,7 +3640,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                 ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }
                 : { background: 'var(--surface-2)', color: 'var(--text-3)' })
             }}>All</button>
-        </div>
+        </div>}
         {/* Sort */}
         <select value={sortBy} onChange={e => setSortBy(e.target.value)}
           className="compact px-2 py-1.5 font-semibold rounded-lg shrink-0"
@@ -3657,7 +3666,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
           {totalPrint > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center" style={{ background: '#5eead4', color: '#09090b' }}>{totalPrint}</span>}
         </button>); })()}
         {/* Select */}
-        <button onClick={() => { setSelectMode(m => { const next = !m; onBulkActive?.(next); return next; }); }} title="Multi-select"
+        {!isReadOnly && <button onClick={() => { setSelectMode(m => { const next = !m; onBulkActive?.(next); return next; }); }} title="Multi-select"
           className="flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
           style={selectMode
             ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }
@@ -3666,15 +3675,15 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2"/>{selectMode && <polyline points="9 11 12 14 22 4"/>}
           </svg>
-        </button>
+        </button>}
         {/* Add */}
-        <button onClick={() => setEditing({ id: null, name: '', genotype: '', category: catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter, location: '25inc', notes: '', variant: catFilter === 'expanded' ? 'expanded' : 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser, copies: 1 })} title="Add new stock"
+        {!isReadOnly && <button onClick={() => setEditing({ id: null, name: '', genotype: '', category: catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter, location: '25inc', notes: '', variant: catFilter === 'expanded' ? 'expanded' : 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser, copies: 1 })} title="Add new stock"
           className="flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
           style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
-        </button>
+        </button>}
       </div>
 
       {/* Collection filter chips */}
@@ -3687,9 +3696,9 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
               : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
             }>{cat === 'all' ? 'All' : cat === 'expanded' ? 'Exp' : cat}</button>
         ))}
-        <button onClick={() => { setAddingCat(true); setNewCatName(''); }}
+        {!isReadOnly && <button onClick={() => { setAddingCat(true); setNewCatName(''); }}
           className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
-          style={{ background: 'var(--surface-2)', color: 'var(--accent-2)', border: '1px solid var(--border)' }}>+</button>
+          style={{ background: 'var(--surface-2)', color: 'var(--accent-2)', border: '1px solid var(--border)' }}>+</button>}
       </div>
 
       {catFilter !== 'all' && catFilter !== 'expanded' && catFilter !== 'No Collection' && filtered.length > 0 && (() => {
@@ -3785,7 +3794,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                               </div>
                             )}
                           </div>
-                          {!selectMode && isMine && needsFlip && (
+                          {!isReadOnly && !selectMode && isMine && needsFlip && (
                             <button onClick={e => { e.stopPropagation(); flipStock(s.id); }}
                               className="touch px-4 py-2 text-sm font-semibold rounded-xl transition-all active:scale-95 shrink-0"
                               style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
@@ -3892,15 +3901,15 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                 {cm ? ` · Maintainer: ${cm}` : mains.length > 1 ? ` · Mixed maintainers` : ' · No maintainer'}
               </p>
 
-              <Btn onClick={() => { setFlipCat(collectionDetail); setFlipDate(today()); setCollectionDetail(null); }} className="w-full mb-4">
+              {!isReadOnly && <Btn onClick={() => { setFlipCat(collectionDetail); setFlipDate(today()); setCollectionDetail(null); }} className="w-full mb-4">
                 {dueCount > 0 ? `Flip All (${dueCount} due)` : 'Set All Flipped'}
-              </Btn>
+              </Btn>}
 
-              {(noMaint || !cm) && (
+              {!isReadOnly && (noMaint || !cm) && (
                 <div className="mb-4">
                   <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: 'var(--text-3)' }}>Assign collection maintainer</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {USERS.map(u => (
+                    {USERS.filter(u => !READ_ONLY_USERS.includes(u)).map(u => (
                       <button key={u} onClick={() => {
                         const ids = new Set(allInCat.map(s => s.id));
                         ids.forEach(id => markEdited(id));
@@ -3915,11 +3924,11 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
                 </div>
               )}
 
-              {cm === currentUser && onTransfer && (
+              {!isReadOnly && cm === currentUser && onTransfer && (
                 <div className="mb-4">
                   <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: 'var(--text-3)' }}>Transfer collection</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {USERS.filter(u => u !== currentUser).map(u => (
+                    {USERS.filter(u => u !== currentUser && !READ_ONLY_USERS.includes(u)).map(u => (
                       <button key={u} onClick={() => { onTransfer({ type: 'collection', collection: collectionDetail, name: collectionDetail, to: u }); setCollectionDetail(null); }}
                         className="px-3 py-1.5 text-xs rounded-lg transition-all active:scale-95 cursor-pointer"
                         style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>{u}</button>
@@ -4215,6 +4224,7 @@ function VcsSetup({ f, setF, toast }) {
 }
 
 function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_CATS, setCollections, currentUser, onTransfer, virginBank, setVirginBank, printList, setPrintList, onMassAdd, expBank, setExpBank }) {
+  const isReadOnly = READ_ONLY_USERS.includes(currentUser);
   const [f, setF] = useState({});
   const [showNotes, setShowNotes] = useState(false);
   const [nameError, setNameError] = useState('');
@@ -4229,7 +4239,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
 
   const saveRef = useRef(null);
   useEffect(() => {
-    if (!stock) return;
+    if (!stock || isReadOnly) return;
     const h = e => {
       if (e.key !== 'Enter') return;
       const tag = document.activeElement?.tagName?.toLowerCase();
@@ -4239,7 +4249,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [!!stock]);
+  }, [!!stock, isReadOnly]);
 
   if (!stock) return null;
   const isNew = !stock.id;
@@ -4272,7 +4282,8 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
   saveRef.current = save;
 
   return (
-    <Modal open={!!stock} onClose={onClose} title={isNew ? 'New Stock' : <div className="flex items-center gap-2">{f.name || 'Edit Stock'}<button onClick={() => { const inList = printList && printList.includes(f.id); setPrintList(p => inList ? p.filter(x => x !== f.id) : [...p, f.id]); toast.add(inList ? 'Removed from print list' : 'Added to print list'); }} className="touch p-1.5 rounded-lg transition-all active:scale-90" style={{ color: printList && printList.includes(f.id) ? '#5eead4' : 'var(--text-3)' }} title={printList && printList.includes(f.id) ? 'In print list' : 'Add to print list'}><svg width="16" height="16" viewBox="0 0 24 24" fill={printList && printList.includes(f.id) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button></div>}>
+    <Modal open={!!stock} onClose={onClose} title={isNew ? 'New Stock' : <div className="flex items-center gap-2">{f.name || (isReadOnly ? 'Stock Details' : 'Edit Stock')}{!isReadOnly && <button onClick={() => { const inList = printList && printList.includes(f.id); setPrintList(p => inList ? p.filter(x => x !== f.id) : [...p, f.id]); toast.add(inList ? 'Removed from print list' : 'Added to print list'); }} className="touch p-1.5 rounded-lg transition-all active:scale-90" style={{ color: printList && printList.includes(f.id) ? '#5eead4' : 'var(--text-3)' }} title={printList && printList.includes(f.id) ? 'In print list' : 'Add to print list'}><svg width="16" height="16" viewBox="0 0 24 24" fill={printList && printList.includes(f.id) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>}</div>}>
+      <div style={isReadOnly ? { pointerEvents: 'none', opacity: 0.7 } : {}}>
       <Field label="Name *">
         <Inp value={f.name || ''} onChange={e => { const v = e.target.value; const upd = { ...f, name: v }; if (!f.source && !f.sourceId) { const g = guessSource(v); if (g) { upd.source = g.source; upd.sourceId = g.sourceId; if (g.source === 'Bloomington' && g.sourceId) upd.flybaseId = `FBst${g.sourceId.replace(/\D/g, '').padStart(7, '0')}`; } } setF(upd); setNameError(''); }} placeholder="e.g. Oregon-R" autoFocus={!isTouchDevice()} />
         {nameError && <p className="text-xs text-red-400 mt-1">{nameError}</p>}
@@ -4420,7 +4431,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
           <select value={f.maintainer || ''} onChange={e => setF({ ...f, maintainer: e.target.value })}
             className="w-full px-4 py-3 text-sm rounded-xl">
             <option value="">-</option>
-            {USERS.map(u => <option key={u} value={u}>{u}</option>)}
+            {USERS.filter(u => !READ_ONLY_USERS.includes(u)).map(u => <option key={u} value={u}>{u}</option>)}
           </select>
         </Field>
       ) : (
@@ -4430,7 +4441,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
             <div>
               <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: 'var(--text-3)' }}>Transfer maintainership</p>
               <div className="flex flex-wrap gap-1.5">
-                {USERS.filter(u => u !== currentUser).map(u => (
+                {USERS.filter(u => u !== currentUser && !READ_ONLY_USERS.includes(u)).map(u => (
                   <button key={u} onClick={() => { onTransfer({ type: 'stock', itemId: f.id, name: f.name, to: u }); onClose(); }}
                     className="px-3 py-1.5 text-xs rounded-lg transition-all active:scale-95 cursor-pointer"
                     style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>{u}</button>
@@ -4508,6 +4519,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
           </div>
         </div>
       )}
+      </div>
       {!isNew && (
         <button onClick={() => {
           const url = window.location.origin + window.location.pathname + '?stock=' + f.id;
@@ -4517,10 +4529,10 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
           Copy share link
         </button>
       )}
-      {isNew && onMassAdd && <button onClick={onMassAdd} className="w-full text-xs mb-3 touch" style={{ color: 'var(--accent-2)' }}>Add multiple stocks at once</button>}
+      {!isReadOnly && isNew && onMassAdd && <button onClick={onMassAdd} className="w-full text-xs mb-3 touch" style={{ color: 'var(--accent-2)' }}>Add multiple stocks at once</button>}
       <div className="flex gap-2">
-        <Btn onClick={save} className="flex-1">Save</Btn>
-        {!isNew && <Btn v="s" onClick={() => {
+        {!isReadOnly && <Btn onClick={save} className="flex-1">Save</Btn>}
+        {!isReadOnly && !isNew && <Btn v="s" onClick={() => {
           const split = { ...f, id: uid(), name: f.name + ' (split)', maintainer: currentUser, createdAt: today(), lastFlipped: today() };
           delete split.notes;
           markEdited(split.id);
@@ -4528,15 +4540,15 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
           toast.add(`Split off "${split.name}"`);
           onClose();
         }}>Split</Btn>}
-        {!isNew && <Btn v="d" onClick={() => onDelete(f.id)}>Delete</Btn>}
-        <Btn v="s" onClick={onClose}>Cancel</Btn>
+        {!isReadOnly && !isNew && <Btn v="d" onClick={() => onDelete(f.id)}>Delete</Btn>}
+        <Btn v="s" onClick={onClose} className={isReadOnly ? 'flex-1' : ''}>{isReadOnly ? 'Close' : 'Cancel'}</Btn>
       </div>
     </Modal>
   );
 }
 
 /* ========== VIRGINS SCREEN ========== */
-function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross }) {
+function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross, isReadOnly }) {
   const [search, setSearch] = useState('');
   const stocksWithVirgins = useMemo(() => {
     return stocks.map(s => ({
@@ -4574,9 +4586,9 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross 
                 <span className="text-xl font-bold" style={{ color: '#f9a8d4' }}>{s.count}</span>
                 <div className="flex-1 min-w-0 cursor-pointer active:scale-95" onClick={() => onStartCross?.(s.id)}>
                   <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
-                  <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>♀ banked · tap to cross</p>
+                  <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>♀ banked{!isReadOnly ? ' · tap to cross' : ''}</p>
                 </div>
-                <button onClick={() => clearStock(s.id)} className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" style={{ color: 'var(--text-3)', background: 'transparent' }} title="Remove">✕</button>
+                {!isReadOnly && <button onClick={() => clearStock(s.id)} className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" style={{ color: 'var(--text-3)', background: 'transparent' }} title="Remove">✕</button>}
               </div>
             ))}
           </div>
@@ -4586,6 +4598,7 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross 
       </div>
 
       {/* Log Virgins */}
+      {!isReadOnly && <>
       <p className="section-header">Log Virgins</p>
       <Inp placeholder="Search stocks..." value={search} onChange={e => setSearch(e.target.value)} className="mb-4" />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
@@ -4612,6 +4625,7 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross 
           );
         })}
       </div>
+      </>}
 
       {stocks.length === 0 && (
         <div className="text-center py-16">
@@ -4623,7 +4637,7 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross 
 }
 
 /* ========== EXP SCREEN ========== */
-function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
+function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, isReadOnly }) {
   const [search, setSearch] = useState('');
   const [logMode, setLogMode] = useState('cross');
 
@@ -4682,7 +4696,7 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
                   <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{e.name}</p>
                   <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>{e.source === 'cross' ? '✕ cross' : '▪ stock'}</p>
                 </div>
-                <button onClick={() => clearEntry(e.id)} className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" style={{ color: 'var(--text-3)', background: 'transparent' }} title="Remove">✕</button>
+                {!isReadOnly && <button onClick={() => clearEntry(e.id)} className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" style={{ color: 'var(--text-3)', background: 'transparent' }} title="Remove">✕</button>}
               </div>
             ))}
           </div>
@@ -4692,7 +4706,7 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
       </div>
 
       {/* Log Section */}
-      <div className="flex items-center gap-2 mb-4">
+      {!isReadOnly && <div className="flex items-center gap-2 mb-4">
         <p className="section-header flex-1" style={{ margin: 0 }}>Log Animals</p>
         <div className="flex gap-1">
           <button onClick={() => setLogMode('cross')} className="px-3 py-1 text-xs font-semibold rounded-lg cursor-pointer"
@@ -4788,6 +4802,7 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
           <p className="text-sm" style={{ color: 'var(--text-3)' }}>{logMode === 'cross' ? 'No crosses in screening/collecting stage yet' : 'Add stocks first'}</p>
         </div>
       )}
+      </div>}
     </div>
   );
 }
@@ -4832,6 +4847,7 @@ function VirginNotifSettings({ toast }) {
 
 /* ========== SETTINGS SCREEN ========== */
 function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser, demoMode }) {
+  const isReadOnly = READ_ONLY_USERS.includes(currentUser);
   const fileRef = useRef(null);
   const [showRef, setShowRef] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -4924,7 +4940,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-      <div className="card p-5">
+      {!isReadOnly && <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Virgins Per Cross</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Number of virgins used when starting a cross from the bank.</p>
         <div className="flex items-center gap-3">
@@ -4936,9 +4952,9 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
             className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold cursor-pointer"
             style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>+</button>
         </div>
-      </div>
+      </div>}
 
-      {currentUser === 'Flo' && !adminUnlocked && (
+      {!isReadOnly && currentUser === 'Flo' && !adminUnlocked && (
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Admin</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Unlock with Flo's PIN to access sync, import/export, and data management.</p>
@@ -5720,6 +5736,7 @@ function AmbientFly() {
 
 function App() {
   const [currentUser, setCurrentUser] = useLS('flo-user', 'Flo');
+  const isReadOnly = READ_ONLY_USERS.includes(currentUser);
   const [locked, setLocked] = useState(() => {
     if (!localStorage.getItem(`flo-pin-${currentUser}`)) return true;
     return false;
@@ -5897,7 +5914,7 @@ function App() {
   useEffect(() => {
     if (deepLinkCross && crosses.length > 0) {
       const c = crosses.find(x => x.id === deepLinkCross || x.id.startsWith(deepLinkCross));
-      if (c && c.owner && c.owner !== currentUser) {
+      if (c && c.owner && c.owner !== currentUser && !isReadOnly) {
         setCrossAccessDenied(cl(c, stocks));
       } else if (c) {
         setTab('home');
@@ -6008,10 +6025,13 @@ function App() {
       <header className="px-4 py-3 sticky top-0 z-20" style={{ background: 'rgba(9,9,11,0.8)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)', borderBottom: '1px solid var(--border)' }}>
         <div className="max-w-6xl mx-auto flex items-center justify-between" style={{ position: 'relative' }}>
           <h1 className="text-lg font-extrabold tracking-tight cursor-pointer" onClick={() => setTab('home')} style={{ color: 'var(--text-1)' }}>Flomington</h1>
-          <select value={currentUser} onChange={e => handleUserSwitch(e.target.value)}
-            className="px-4 py-1.5 text-sm font-semibold rounded-xl" style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)', outline: 'none', textAlign: 'center', position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-            {USERS.map(u => <option key={u} value={u}>{u}</option>)}
-          </select>
+          <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <select value={currentUser} onChange={e => handleUserSwitch(e.target.value)}
+              className="px-4 py-1.5 text-sm font-semibold rounded-xl" style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)', outline: 'none', textAlign: 'center' }}>
+              {USERS.map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+            {isReadOnly && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(245,158,11,0.12)', color: '#fcd34d', border: '1px solid rgba(245,158,11,0.2)', whiteSpace: 'nowrap' }}>view only</span>}
+          </div>
           <div className="flex items-center gap-3">
             <span className="text-xs" style={{ color: 'var(--text-3)', cursor: 'default', userSelect: 'none' }} onDoubleClick={() => window.__spawnFly && window.__spawnFly()}>{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
             <button onClick={() => setTab('settings')} className="touch"
@@ -6040,8 +6060,8 @@ function App() {
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} />}
           {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} />}
-          {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
-          {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} />}
+          {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={isReadOnly ? null : (stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} isReadOnly={isReadOnly} />}
+          {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} isReadOnly={isReadOnly} />}
           {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} />}
         </div>
       </main>
@@ -6056,7 +6076,7 @@ function App() {
           {IconStocks(tab === 'stocks')}
           <span style={{ color: tab === 'stocks' ? 'var(--accent-2)' : 'var(--text-3)' }}>Stocks</span>
         </div>
-        <div onClick={() => setNewCrossOpen(true)} className="nav-item">
+        {!isReadOnly && <div onClick={() => setNewCrossOpen(true)} className="nav-item">
           <div className="flex items-center justify-center w-7 h-7 rounded-full" style={{
             background: 'linear-gradient(135deg, #7c3aed, #6d28d9)',
             boxShadow: '0 2px 8px var(--accent-glow)',
@@ -6066,7 +6086,7 @@ function App() {
             </svg>
           </div>
           <span style={{ color: 'var(--accent-2)' }}>Cross</span>
-        </div>
+        </div>}
         <div onClick={() => setTab('virgins')} className={`nav-item ${tab === 'virgins' ? 'active' : ''}`}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={tab === 'virgins' ? '#f9a8d4' : '#52525b'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="8" r="5" /><path d="M12 13v8" /><path d="M9 18h6" />

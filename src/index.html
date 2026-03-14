@@ -580,6 +580,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
           if (isDeletedLocally(payload.new.id) || isEditedLocally(payload.new.id)) return;
           const item = toCamel(payload.new, STOCK_FIELD_MAP);
           if (item.isGift === false) delete item.isGift;
+          if (typeof item.vcs === 'string') try { item.vcs = JSON.parse(item.vcs); } catch { item.vcs = null; }
           setStocks(prev => {
             const idx = prev.findIndex(s => s.id === item.id);
             if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...item }; return next; }
@@ -5777,11 +5778,11 @@ function App() {
     setSyncStatus('Syncing...');
     supabasePull().then(remote => {
       if (remote.stocks) setStocks(prev => {
-        // Preserve local-only fields (like vcs) that don't exist in Supabase yet
         const localMap = new Map(prev.map(s => [s.id, s]));
         return remote.stocks.map(rs => {
           const local = localMap.get(rs.id);
-          return local?.vcs ? { ...rs, vcs: local.vcs } : rs;
+          if (local?.vcs && !rs.vcs) return { ...rs, vcs: local.vcs };
+          return rs;
         });
       });
       if (remote.crosses) setCrosses(remote.crosses);

@@ -5777,13 +5777,15 @@ function App() {
     hasPulled.current = true;
     setSyncStatus('Syncing...');
     supabasePull().then(remote => {
+      let vcsBackfilled = false;
       if (remote.stocks) setStocks(prev => {
         const localMap = new Map(prev.map(s => [s.id, s]));
-        return remote.stocks.map(rs => {
+        const merged = remote.stocks.map(rs => {
           const local = localMap.get(rs.id);
-          if (local?.vcs && !rs.vcs) return { ...rs, vcs: local.vcs };
+          if (local?.vcs && !rs.vcs) { vcsBackfilled = true; return { ...rs, vcs: local.vcs }; }
           return rs;
         });
+        return merged;
       });
       if (remote.crosses) setCrosses(remote.crosses);
       if (remote.pins && remote.pins.length > 0) {
@@ -5799,7 +5801,15 @@ function App() {
         }
       }
       setSyncStatus('Synced ' + new Date().toLocaleTimeString());
-      setTimeout(() => { initialPushBlocked.current = false; }, 1000);
+      setTimeout(() => {
+        initialPushBlocked.current = false;
+        if (vcsBackfilled) {
+          try {
+            const st = JSON.parse(localStorage.getItem('flo-stocks') || '[]');
+            supabasePush(st, null, null).catch(() => {});
+          } catch {}
+        }
+      }, 2000);
       // Backfill Janelia lines for existing Bloomington stocks
       const toCheck = (remote.stocks || []).filter(s => s.source === 'Bloomington' && s.sourceId && !s.janeliaLine);
       if (toCheck.length > 0) {

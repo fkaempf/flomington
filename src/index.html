@@ -5375,7 +5375,8 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
       allLabels.push({ id: 'v-' + s.id, name: esc(s.name), line2: esc(s.genotype || ''), line3: '\u24CB', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
     });
     expItems.forEach(e => {
-      allLabels.push({ id: 'e-' + e.id, name: esc(e.name), line2: esc(e.genotype), line3: '\u24BA', qrUrl: null });
+      const eqr = showQR ? qrBase + (e.source === 'cross' ? '?c=' : '?s=') + e.id.slice(0, 8) : null;
+      allLabels.push({ id: 'e-' + e.id, name: esc(e.name), line2: esc(e.genotype), line3: '\u24BA', qrUrl: eqr });
     });
 
     const perPage = spec.cols * spec.rows;
@@ -5540,7 +5541,7 @@ setTimeout(function(){ window.print(); }, 500);
                 </div>
               );
             })}
-            {virginItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Virgins \u24CB</p>}
+            {virginItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Virgins {'\u24CB'}</p>}
             {virginItems.map(s => (
               <div key={'v-'+s.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 <div className="flex-1 min-w-0">
@@ -5553,7 +5554,7 @@ setTimeout(function(){ window.print(); }, 500);
                 </button>
               </div>
             ))}
-            {expItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Experiments \u24BA</p>}
+            {expItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Experiments {'\u24BA'}</p>}
             {expItems.map(e => (
               <div key={'e-'+e.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 <div className="flex-1 min-w-0">

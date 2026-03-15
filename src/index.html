@@ -695,7 +695,7 @@ const VCS_DEFAULTS = {
   '25_3': { eveningClear: '18:00', morningCollect: '09:00', middayCollect: '12:00', afternoonCollect: '16:30' },
 };
 function vcsKey(o18, n) { return (o18 ? '18' : '25') + '_' + n; }
-function getVirginWindowH(o18) { return o18 ? 16 : 8; }
+function getVirginWindowH() { return 8; }
 function makeVcs(o18, cpd, sched) {
   const now = new Date().toISOString();
   return { enabled: true, overnightAt18: !!o18, collectionsPerDay: cpd, schedule: { ...sched },

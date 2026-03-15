@@ -413,22 +413,313 @@ git commit -m "v1.0.0: stability improvements - sync, dedup, robustness"
 
 ---
 
-## Task Dependencies
+---
+
+## Phase 5: Data Safety (Tasks 11-13) — from deep audit
+
+### Task 11: Add Confirmation Dialogs for Destructive Actions
+
+**Files:** Modify: `src/index.html` (clearAll, loadDemo, changePin functions)
+
+- [ ] **Step 1: Wrap `clearAll()` (~line 4962) in Confirm dialog**
+- [ ] **Step 2: Wrap `loadDemo()` (~line 4950) in Confirm dialog** — "Load demo data? This replaces all current data."
+- [ ] **Step 3: Wrap `changePin()` (~line 4968) in Confirm dialog** — "Reset all user PINs?"
+- [ ] **Step 4: Add undo to bulk delete (~line 3602)** — store backup array, add undo callback to toast
+- [ ] **Step 5: Block ALL sync in demo mode** (currently only blocks initial push, not subsequent)
+- [ ] **Step 6: Show "Demo Mode" banner when `demoMode.current === true`**
+- [ ] **Step 7: Add basic validation to JSON import** — check `Array.isArray(d.stocks)`, file size < 10MB
+- [ ] **Step 8: Commit**
+
+```bash
+git commit -m "feat: add confirmation dialogs for destructive actions, demo mode banner"
+```
+
+---
+
+### Task 12: Fix VCS Overnight Reset Bug
+
+**Files:** Modify: `src/index.html:748-752` (todayActions in computeNextActions)
+
+**Context:** todayActions never resets across overnight boundaries. If the app is closed after afternoon collect and reopened next morning, stale actions block new morning collections.
+
+- [ ] **Step 1: Add cycle boundary detection in computeNextActions**
+
+When `lastClearTime` is set and current time is past the deadline + grace period, treat todayActions as stale. Only count actions from the current cycle window:
+
+```js
+// After computing deadline (line 755)
+const cycleExpired = deadline && nowMs > deadline + 30 * 60000;
+
+// In the todayActions filter (line 748), also check if action is within current cycle
+(todayActions || []).forEach(a => {
+  if (!a.key) return;
+  const actionMs = a.time ? new Date(a.time).getTime() : 0;
+  if (actionMs >= clearMs && !cycleExpired) doneKeys.add(a.key);
+});
+```
+
+- [ ] **Step 2: Distinguish overdue vs expired in status colors**
+
+`isOverdue` (30min past scheduled time) should show yellow/amber, not red. Only `isPastDeadline` (8h expiry) should be red.
+
+- [ ] **Step 3: Show warning for auto-skipped actions** instead of silently removing them
+
+```js
+// Instead of result.shift(), mark as tooLate
+if (result.length > 1 && result[0].timeUntilMs < -2 * 3600000) {
+  result[0].tooLate = true;
+}
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -m "fix: VCS overnight reset, distinguish overdue vs expired, show skipped actions"
+```
+
+---
+
+### Task 13: Fix Cross Workflow Edge Cases
+
+**Files:** Modify: `src/index.html` (stock deletion, setStatus, re-vial)
+
+- [ ] **Step 1: Warn before deleting stocks with active crosses**
+
+In the stock delete handler, check if any crosses reference the stock as parentA/parentB:
+
+```js
+const affectedCrosses = crosses.filter(c => c.parentA === stockId || c.parentB === stockId);
+if (affectedCrosses.length > 0) {
+  // Show warning in Confirm dialog: "This stock is used in N crosses"
+}
+```
+
+- [ ] **Step 2: Initialize VCS when manually setting status to "collecting virgins"**
+
+In `setStatus()` (~line 2074), add VCS creation same as `advance()`:
+
+```js
+if (st === 'collecting virgins' && !cross.vcs) {
+  updates.vcs = makeVcs(cross.temperature === '18C', 2, VCS_DEFAULTS[vcsKey(...)]);
+}
+```
+
+- [ ] **Step 3: Clear stale VCS on re-vial**
+
+In `revial()` (~line 2035), set `vcs: null` on the clone.
+
+- [ ] **Step 4: Use deep merge for collected/vials in realtime handler**
+
+In the realtime stock/cross handler (~line 585), don't overwrite arrays:
+
+```js
+if (idx >= 0) {
+  const merged = { ...next[idx], ...item };
+  // Preserve longer arrays (don't truncate)
+  if (next[idx].collected?.length > (item.collected?.length || 0)) merged.collected = next[idx].collected;
+  if (next[idx].vials?.length > (item.vials?.length || 0)) merged.vials = next[idx].vials;
+  next[idx] = merged;
+}
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "fix: cross workflow - orphan warning, VCS on manual status, deep merge arrays"
+```
+
+---
+
+## Phase 6: Mobile UX (Tasks 14-15) — from deep audit
+
+### Task 14: Fix iOS Safe Area and Touch Targets
+
+**Files:** Modify: `src/index.html` (CSS + button sizing)
+
+- [ ] **Step 1: Add iOS safe area to bottom nav (~line 354)**
+
+```css
+.bottom-nav {
+  bottom: max(16px, env(safe-area-inset-bottom, 16px));
+}
+```
+
+- [ ] **Step 2: Increase VCS action button touch targets**
+
+Change all VCS card buttons from `text-[11px] px-2 py-1.5` to `text-[12px] px-3 py-2` for minimum ~36px height. Apply to:
+- VCS collect/clear/discard buttons (~lines 3066-3094, 3242-3270)
+- 18C confirmation buttons (~lines 3113-3118, 3288-3293)
+- Virgin bank log buttons (~lines 3128-3146)
+
+- [ ] **Step 3: Increase modal close button to 44px**
+
+Change `w-8 h-8` to `w-11 h-11` (~line 1801)
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -m "fix: iOS safe area, increase touch targets for VCS buttons"
+```
+
+---
+
+### Task 15: Add Offline Indicator
+
+**Files:** Modify: `src/index.html` (App component, header area)
+
+- [ ] **Step 1: Add online/offline event listeners**
+
+```js
+const [isOnline, setIsOnline] = useState(navigator.onLine);
+useEffect(() => {
+  const on = () => setIsOnline(true);
+  const off = () => setIsOnline(false);
+  window.addEventListener('online', on);
+  window.addEventListener('offline', off);
+  return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+}, []);
+```
+
+- [ ] **Step 2: Show offline badge in header when disconnected**
+
+```jsx
+{!isOnline && (
+  <span className="px-2 py-0.5 rounded text-[10px] font-semibold"
+    style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }}>Offline</span>
+)}
+```
+
+- [ ] **Step 3: Add localStorage quota warning to useLS**
+
+In the catch block of `useLS` (~line 937), check for `QuotaExceededError` and show toast.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -m "feat: offline indicator, localStorage quota warning"
+```
+
+---
+
+## Phase 7: Supabase Hardening (Task 16) — from security audit + Supabase best practices
+
+### Task 16: Add RLS Policies and Pin CDN Versions
+
+> **Reference:** [Supabase shared responsibility model](https://supabase.com/docs/guides/deployment/shared-responsibility-model), [Leanware RLS best practices](https://www.leanware.co/insights/supabase-best-practices)
+
+**Files:** Supabase SQL console + `src/index.html` (CDN script tags)
+
+- [ ] **Step 1: Add RLS policies to existing tables**
+
+```sql
+-- Stocks: everyone can read, authenticated can write (keep simple per Leanware guide)
+ALTER TABLE stocks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all for anon" ON stocks FOR ALL USING (true) WITH CHECK (true);
+
+-- Same for crosses and pins (already done for new tables)
+ALTER TABLE crosses ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all for anon" ON crosses FOR ALL USING (true) WITH CHECK (true);
+
+ALTER TABLE pins ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all for anon" ON pins FOR ALL USING (true) WITH CHECK (true);
+```
+
+Note: For an internal lab tool with 7 trusted users, "allow all" RLS is appropriate. The important thing is that RLS is ENABLED so Supabase enforces the policy layer. If the app ever becomes multi-lab, tighten these to user-based policies.
+
+- [ ] **Step 2: Pin CDN versions with exact versions (~line 9-13)**
+
+```html
+<script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
+```
+
+- [ ] **Step 3: Fix esc() function to escape quotes**
+
+```js
+const esc = t => t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -m "security: enable RLS on all tables, pin CDN versions, fix XSS escaping"
+```
+
+---
+
+## Phase 8: Docs + Version (Task 17)
+
+### Task 17: Update CLAUDE.md, Encrypt, Final Commit
+
+- [ ] **Step 1: Add v1.0.0 version entry to CLAUDE.md**
 
 ```
-Task 1 (SQL) --> Task 2 (virgin bank) --> Task 3 (exp bank) --> Task 4 (transfers) --> Task 5 (cleanup)
-Task 6 (VcsCard) - independent of Phase 1
-Task 7 (ErrorBoundary) - independent
-Task 8 (sync indicator) - after Tasks 2-4
-Task 9 (React.memo) - after Task 6
-Task 10 (docs) - last
+| 1.0.0 | `<hash>` | 2026-03-15 | Stability: Supabase sync for virgin/exp banks + transfers, VcsCard dedup, error boundaries, data safety, mobile fixes, RLS |
 ```
 
-Recommended order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
+- [ ] **Step 2: Update "What's done" section** with all new features
+- [ ] **Step 3: Encrypt and final commit**
+
+```bash
+npx staticrypt src/index.html -d . --short --remember 30 --template-title 'Flomington' --template-instructions 'Enter the lab password to access the fly stock manager.' --template-color-primary '#8b5cf6' --template-color-secondary '#09090b' -p "0a1fams"
+git add index.html && git add -f src/index.html && git add CLAUDE.md
+git commit -m "v1.0.0: stability improvements complete"
+```
+
+---
+
+## Task Dependencies (Updated)
+
+```
+Phase 1: Task 1 (SQL) --> Task 2 (virgin bank) --> Task 3 (exp bank) --> Task 4 (transfers) --> Task 5 (cleanup)
+Phase 2: Task 6 (VcsCard) - independent
+Phase 3: Task 7 (ErrorBoundary) - independent
+         Task 8 (sync indicator) - after Phase 1
+         Task 9 (React.memo) - after Task 6
+Phase 5: Task 11 (data safety) - independent
+         Task 12 (VCS overnight fix) - independent
+         Task 13 (cross workflow) - independent
+Phase 6: Task 14 (mobile) - independent
+         Task 15 (offline) - independent
+Phase 7: Task 16 (Supabase + security) - after Phase 1
+Phase 8: Task 17 (docs) - last
+```
+
+Recommended execution order: 1 → 2 → 3 → 4 → 5 → 11 → 12 → 13 → 6 → 7 → 8 → 14 → 15 → 9 → 16 → 17
+
+Data safety (11) and bug fixes (12, 13) before refactoring (6) and polish (14, 15).
+
+---
+
+## Architecture Reference Links
+
+For future refactoring beyond this plan (when approaching ~7K+ lines or adding build step):
+
+**React Architecture:**
+- [Bulletproof React](https://github.com/alan2207/bulletproof-react) — feature-based folder structure (features/stocks, features/crosses, features/vcs each with own API/components/hooks)
+- [React folder structure evolution](https://www.robinwieruch.de/react-folder-structure/) — 5-step progression from flat to feature-based
+- [React architecture 2025](https://launchdarkly.com/docs/blog/react-architecture-2025) — "lift content up, push state down"
+- [Strapi React best practices](https://strapi.io/blog/react-and-nextjs-in-2025-modern-best-practices) — state management decision tree (useState for small, Zustand for complex, TanStack Query for server state)
+
+**Supabase:**
+- [Database overview](https://supabase.com/docs/guides/database/overview) — tables, extensions, importing
+- [React quickstart](https://supabase.com/docs/guides/getting-started/quickstarts/reactjs) — connecting React to Supabase
+- [Migrations & schemas](https://supabase.com/docs/guides/local-development/declarative-database-schemas) — managing schema changes with CLI
+- [Shared responsibility model](https://supabase.com/docs/guides/deployment/shared-responsibility-model) — what's on you vs Supabase
+- [Leanware best practices](https://www.leanware.co/insights/supabase-best-practices) — RLS (keep simple), never expose service_role
+- [Cursor Rules Supabase guide](https://cursorrules.org/article/supabase-cursor-mdc-file) — multi-environment, avoid direct prod changes
+
+**Database Design:**
+- [42 Coffee Cups best practices](https://www.42coffeecups.com/blog/database-design-best-practices) — normalization, indexing, naming conventions
 
 ## Risk Notes
 
 - **toSnake null fix (Task 2):** Now sends null values to Supabase. Verify `notes`, `giftFrom`, `janeliaLine` columns accept null (they should).
 - **Realtime user filtering:** Virgin bank and exp bank handlers need to check `user_name` matches current user to avoid cross-contamination.
-- **VcsCard extraction (Task 6):** Bank prompts must NOT go inside VcsCard - cross bank prompt updates `virginsCollected`, stock bank prompt updates `virginBank`. Keep them as caller-rendered.
+- **VcsCard extraction (Task 6):** Bank prompts must NOT go inside VcsCard — cross bank prompt updates `virginsCollected`, stock bank prompt updates `virginBank`. Keep them as caller-rendered.
 - **Merge on pull:** Using "local wins with higher value" for counts, "local wins for status" for transfers.
+- **VCS overnight fix (Task 12):** The `cycleExpired` check changes behavior. Test carefully: clear at 17:30, reopen at 09:00 next morning — morning collect should appear as the next action.
+- **Deep merge arrays (Task 13):** Preserving longer arrays prevents truncation but means deletes from other devices may not propagate. Acceptable tradeoff for a lab tool.

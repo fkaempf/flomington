@@ -2185,6 +2185,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
       waitStartDate: today(),
       collected: [],
       vials: [],
+      vcs: null,
       notes: `Re-vial of ${cl(cross, stocks)}`,
     };
     markEdited(clone.id);
@@ -2217,7 +2218,9 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
 
   function setStatus(st) {
     markEdited(cross.id);
-    const extra = st === 'waiting for progeny' ? { waitStartDate: today() } : {};
+    const extra = st === 'waiting for progeny' ? { waitStartDate: today(), vcs: null }
+      : st === 'collecting virgins' && !cross.vcs ? { vcs: makeVcs(cross.overnightAt18 !== false, 2, VCS_DEFAULTS[vcsKey(cross.overnightAt18 !== false, 2)]) }
+      : {};
     setCrosses(p => p.map(c => c.id === cross.id ? { ...c, status: st, ...extra } : c));
     toast.add(`Set to: ${st}`);
   }
@@ -3640,7 +3643,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
 }
 
 /* ========== STOCKS SCREEN ========== */
-function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, printListCrosses, printListVirgins, printListExps, onOpenPrint, onBulkActive, expBank, setExpBank }) {
+function StocksScreen({ stocks, setStocks, crosses, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, printListCrosses, printListVirgins, printListExps, onOpenPrint, onBulkActive, expBank, setExpBank }) {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState(() => initialStockId ? 'all' : 'all');
   const [showAll, setShowAll] = useState(() => !!initialStockId);
@@ -3990,7 +3993,11 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       )}
 
       <StockModal stock={editing} onClose={() => setEditing(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={id => { setEditing(null); setDeleting(id); }} STOCK_CATS={STOCK_CATS} setCollections={setCollections} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} printList={printList} setPrintList={setPrintList} onMassAdd={() => { setEditing(null); setMassAdding(true); setMassAddText(''); setMassAddCat(catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter); setMassAddLoc('25inc'); }} expBank={expBank} setExpBank={setExpBank} />
-      <Confirm open={!!deleting} onOk={doDelete} onNo={() => setDeleting(null)} title="Delete stock?" msg="This stock will be permanently removed." />
+      <Confirm open={!!deleting} onOk={doDelete} onNo={() => setDeleting(null)} title="Delete stock?" msg={(() => {
+        const affectedCrosses = (crosses || []).filter(c => c.status !== 'done' && (c.parentA === deleting || c.parentB === deleting));
+        if (affectedCrosses.length > 0) return `This stock is used in ${affectedCrosses.length} active cross${affectedCrosses.length > 1 ? 'es' : ''}. Deleting it will leave ${affectedCrosses.length > 1 ? 'those crosses' : 'that cross'} with a missing parent. This stock will be permanently removed.`;
+        return 'This stock will be permanently removed.';
+      })()} />
 
       {/* Mass add stocks modal */}
       <Modal open={massAdding} onClose={() => setMassAdding(false)} title="Mass Add Stocks">
@@ -6408,7 +6415,7 @@ function App() {
           }} STOCK_CATS={STOCK_CATS} sentTransfers={sentResolved} onDismissTransfer={(t) => {
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} />}
-          {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} />}
+          {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} crosses={crosses} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} />}
           {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} />}
           {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} setIsDemoMode={setIsDemoMode} />}

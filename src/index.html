@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#09090b">
 <title>Flomington</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cellipse cx='8' cy='15' rx='7' ry='3.5' fill='%23c4b5fd' opacity='.4' transform='rotate(-15 16 13)'/%3E%3Cellipse cx='24' cy='15' rx='7' ry='3.5' fill='%23c4b5fd' opacity='.4' transform='rotate(15 16 13)'/%3E%3Cpath d='M13 15 Q10 17 8 20' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M19 15 Q22 17 24 20' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M12.5 18 Q9 20 7 23' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M19.5 18 Q23 20 25 23' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M13 21 Q10 24 9 27' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M19 21 Q22 24 23 27' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cellipse cx='16' cy='21' rx='5' ry='7.5' fill='%237c3aed'/%3E%3Cellipse cx='16' cy='13' rx='4' ry='4' fill='%238b5cf6'/%3E%3Ccircle cx='16' cy='8' r='3.5' fill='%23a78bfa'/%3E%3Ccircle cx='14' cy='7' r='1.8' fill='%23ef4444'/%3E%3Ccircle cx='18' cy='7' r='1.8' fill='%23ef4444'/%3E%3Ccircle cx='13.6' cy='6.4' r='.5' fill='%23fca5a5' opacity='.8'/%3E%3Ccircle cx='17.6' cy='6.4' r='.5' fill='%23fca5a5' opacity='.8'/%3E%3Cellipse cx='16' cy='19' rx='4' ry='.5' fill='%236d28d9' opacity='.3'/%3E%3Cellipse cx='16' cy='22' rx='3.3' ry='.4' fill='%236d28d9' opacity='.3'/%3E%3Cellipse cx='16' cy='25' rx='2.2' ry='.3' fill='%236d28d9' opacity='.3'/%3E%3C/svg%3E">
@@ -13,6 +13,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 :root {
   color-scheme: dark;
@@ -353,7 +355,7 @@ input:focus, textarea:focus, select:focus {
 /* ===== Floating nav ===== */
 .bottom-nav {
   position: fixed;
-  bottom: 16px;
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
@@ -435,7 +437,7 @@ const CROSS_FIELD_MAP = {
 function toSnake(obj, fieldMap) {
   const out = {};
   for (const [camel, snake] of Object.entries(fieldMap)) {
-    if (obj[camel] !== undefined && obj[camel] !== null) out[snake] = obj[camel];
+    if (obj[camel] !== undefined) out[snake] = obj[camel];
   }
   return out;
 }
@@ -534,6 +536,103 @@ async function supabaseSyncDeletes(table, localIds) {
   }
 }
 
+async function supabasePushVirginBank(userName, virginBank) {
+  const sb = getSb();
+  if (!sb) return;
+  const rows = Object.entries(virginBank)
+    .filter(([, count]) => count > 0)
+    .map(([stockId, count]) => ({
+      user_name: userName, stock_id: stockId, count,
+      updated_at: new Date().toISOString(),
+    }));
+  if (rows.length > 0) {
+    const { error } = await sb.from('virgin_banks').upsert(rows, { onConflict: 'user_name,stock_id' });
+    if (error) console.error('Virgin bank push failed:', error);
+  }
+  const { data: remote } = await sb.from('virgin_banks').select('stock_id').eq('user_name', userName);
+  if (remote) {
+    const localIds = new Set(Object.keys(virginBank).filter(k => virginBank[k] > 0));
+    const toDelete = remote.filter(r => !localIds.has(r.stock_id)).map(r => r.stock_id);
+    if (toDelete.length > 0) {
+      await sb.from('virgin_banks').delete().eq('user_name', userName).in('stock_id', toDelete);
+    }
+  }
+}
+
+async function supabasePullVirginBank(userName) {
+  const sb = getSb();
+  if (!sb) return {};
+  const { data, error } = await sb.from('virgin_banks').select('*').eq('user_name', userName);
+  if (error || !data) return {};
+  const bank = {};
+  data.forEach(row => { if (row.count > 0) bank[row.stock_id] = row.count; });
+  return bank;
+}
+
+async function supabasePushExpBank(userName, expBank) {
+  const sb = getSb();
+  if (!sb) return;
+  const rows = Object.entries(expBank)
+    .filter(([, v]) => (v.m || 0) + (v.f || 0) > 0)
+    .map(([sourceId, v]) => ({
+      user_name: userName, source_id: sourceId,
+      source_type: v.source || 'cross',
+      male_count: v.m || 0, female_count: v.f || 0,
+      updated_at: new Date().toISOString(),
+    }));
+  if (rows.length > 0) {
+    const { error } = await sb.from('exp_banks').upsert(rows, { onConflict: 'user_name,source_id' });
+    if (error) console.error('Exp bank push failed:', error);
+  }
+  const { data: remote } = await sb.from('exp_banks').select('source_id').eq('user_name', userName);
+  if (remote) {
+    const localIds = new Set(Object.keys(expBank).filter(k => (expBank[k].m || 0) + (expBank[k].f || 0) > 0));
+    const toDelete = remote.filter(r => !localIds.has(r.source_id)).map(r => r.source_id);
+    if (toDelete.length > 0) {
+      await sb.from('exp_banks').delete().eq('user_name', userName).in('source_id', toDelete);
+    }
+  }
+}
+
+async function supabasePullExpBank(userName) {
+  const sb = getSb();
+  if (!sb) return {};
+  const { data, error } = await sb.from('exp_banks').select('*').eq('user_name', userName);
+  if (error || !data) return {};
+  const bank = {};
+  data.forEach(row => {
+    bank[row.source_id] = { m: row.male_count || 0, f: row.female_count || 0, source: row.source_type || 'cross' };
+  });
+  return bank;
+}
+
+async function supabasePushTransfers(transfers) {
+  const sb = getSb();
+  if (!sb || !transfers?.length) return;
+  const rows = transfers.map(t => ({
+    id: t.id, from_user: t.from, to_user: t.to,
+    transfer_type: t.type, item_id: t.itemId || null,
+    collection_name: t.collection || null,
+    display_name: t.name, status: t.status || 'pending',
+    seen: t.seen || false, created_at: t.createdAt || new Date().toISOString(),
+  }));
+  const { error } = await sb.from('transfers').upsert(rows, { onConflict: 'id' });
+  if (error) console.error('Transfers push failed:', error);
+}
+
+async function supabasePullTransfers() {
+  const sb = getSb();
+  if (!sb) return [];
+  const { data, error } = await sb.from('transfers').select('*');
+  if (error || !data) return [];
+  return data.map(row => ({
+    id: row.id, from: row.from_user, to: row.to_user,
+    type: row.transfer_type, itemId: row.item_id,
+    collection: row.collection_name, name: row.display_name,
+    status: row.status, seen: row.seen || false, createdAt: row.created_at,
+  }));
+}
+
 function mergeStocks(local, remote) {
   const merged = [...local];
   const localIds = new Set(local.map(s => s.id));
@@ -569,7 +668,7 @@ function supabaseDeleteNow(table, id) {
   sb.from(table).delete().eq('id', id).then(() => {});
 }
 
-function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
+function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank, setExpBank, setTransfers) {
   const subRef = React.useRef(null);
   React.useEffect(() => {
     const sb = getSb();
@@ -612,6 +711,48 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
             localStorage.setItem('flo-pin-' + p.user_name, p.hash);
             setPinVersion(v => v + 1);
           }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'virgin_banks' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const row = payload.new;
+          if (setVirginBank) setVirginBank(prev => {
+            if (row.count > 0) return { ...prev, [row.stock_id]: row.count };
+            const next = { ...prev }; delete next[row.stock_id]; return next;
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.stock_id) {
+          if (setVirginBank) setVirginBank(prev => { const next = { ...prev }; delete next[payload.old.stock_id]; return next; });
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exp_banks' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const row = payload.new;
+          if (setExpBank) setExpBank(prev => {
+            if ((row.male_count || 0) + (row.female_count || 0) > 0) {
+              return { ...prev, [row.source_id]: { m: row.male_count || 0, f: row.female_count || 0, source: row.source_type || 'cross' } };
+            }
+            const next = { ...prev }; delete next[row.source_id]; return next;
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.source_id) {
+          if (setExpBank) setExpBank(prev => { const next = { ...prev }; delete next[payload.old.source_id]; return next; });
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transfers' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const row = payload.new;
+          const item = {
+            id: row.id, from: row.from_user, to: row.to_user,
+            type: row.transfer_type, itemId: row.item_id,
+            collection: row.collection_name, name: row.display_name,
+            status: row.status, seen: row.seen || false, createdAt: row.created_at,
+          };
+          if (setTransfers) setTransfers(prev => {
+            const idx = prev.findIndex(t => t.id === item.id);
+            if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...item }; return next; }
+            return [...prev, item];
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.id) {
+          if (setTransfers) setTransfers(prev => prev.filter(t => t.id !== payload.old.id));
         }
       })
       .subscribe();
@@ -743,17 +884,19 @@ function computeNextActions(vcs, now) {
   // Only count actions from the current window (since last clear)
   const doneKeys = new Set();
   const clearMs = lastClearTime ? new Date(lastClearTime).getTime() : 0;
+  const nowMs = now.getTime();
+
+  // Compute deadline from last clear
+  const deadline = lastClearTime ? clearMs + windowMs : null;
+  const cycleExpired = deadline && nowMs > deadline + 30 * 60000;
+
   // The clear that set lastClearTime IS the evening clear - auto-mark it done
   if (lastClearTime) doneKeys.add('evening');
   (todayActions || []).forEach(a => {
     if (!a.key) return;
     const actionMs = a.time ? new Date(a.time).getTime() : 0;
-    if (actionMs >= clearMs) doneKeys.add(a.key);
+    if (actionMs >= clearMs && !cycleExpired) doneKeys.add(a.key);
   });
-
-  // Compute deadline from last clear
-  const deadline = lastClearTime ? clearMs + windowMs : null;
-  const nowMs = now.getTime();
 
   // Fixed schedule times - no dynamic shift. Deadline moves with actual clear time.
   const result = [];
@@ -804,7 +947,8 @@ function getVcsStatus(vcs, now) {
   if (!actions.length) return 'green';
   const next = actions[0];
   if (next.isPastDeadline) return 'red';
-  if (next.isOverdue) return 'red';
+  if (next.isInGracePeriod) return 'red';
+  if (next.isOverdue) return 'yellow';
   if (next.timeUntilMs < 30 * 60000) return 'yellow';
   return 'green';
 }
@@ -940,7 +1084,7 @@ function useLS(key, init) {
       prevKey.current = key;
     }
   }, [key]);
-  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(v)); } catch {} }, [key, v]);
+  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) { if (e?.name === 'QuotaExceededError') console.error('localStorage full'); } }, [key, v]);
   return [v, setV];
 }
 
@@ -1798,7 +1942,7 @@ function Modal({ open, onClose, title, children, wide }) {
         {title && (
           <div className="flex items-center justify-between mb-5">
             <h3 className="text-base font-bold" style={{ color: 'var(--text-1)' }}>{title}</h3>
-            <button onClick={onClose} className="touch rounded-full w-8 h-8 flex items-center justify-center transition-all active:scale-90 hover:opacity-80" style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' }}>
+            <button onClick={onClose} className="touch rounded-full w-10 h-10 flex items-center justify-center transition-all active:scale-90 hover:opacity-80" style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' }}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg>
             </button>
           </div>
@@ -1809,7 +1953,7 @@ function Modal({ open, onClose, title, children, wide }) {
   );
 }
 
-function Confirm({ open, onOk, onNo, title, msg }) {
+function Confirm({ open, onOk, onNo, title, msg, okLabel = 'Delete' }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={onNo}>
@@ -1819,7 +1963,7 @@ function Confirm({ open, onOk, onNo, title, msg }) {
         <p className="text-xs mb-5" style={{ color: 'var(--text-3)' }}>{msg}</p>
         <div className="flex gap-2">
           <button onClick={onOk} className="touch flex-1 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-95"
-            style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>Delete</button>
+            style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>{okLabel}</button>
           <button onClick={onNo} className="touch flex-1 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-95"
             style={{ background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>Cancel</button>
         </div>
@@ -2041,6 +2185,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
       waitStartDate: today(),
       collected: [],
       vials: [],
+      vcs: null,
       notes: `Re-vial of ${cl(cross, stocks)}`,
     };
     markEdited(clone.id);
@@ -2073,7 +2218,9 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
 
   function setStatus(st) {
     markEdited(cross.id);
-    const extra = st === 'waiting for progeny' ? { waitStartDate: today() } : {};
+    const extra = st === 'waiting for progeny' ? { waitStartDate: today(), vcs: null }
+      : st === 'collecting virgins' && !cross.vcs ? { vcs: makeVcs(cross.overnightAt18 !== false, 2, VCS_DEFAULTS[vcsKey(cross.overnightAt18 !== false, 2)]) }
+      : {};
     setCrosses(p => p.map(c => c.id === cross.id ? { ...c, status: st, ...extra } : c));
     toast.add(`Set to: ${st}`);
   }
@@ -2664,6 +2811,23 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
   );
 }
 
+/* ========== ERROR BOUNDARY ========== */
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error('ErrorBoundary caught:', error, info); }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement('div', { className: 'card p-8 text-center m-6', style: { border: '1px solid rgba(239,68,68,0.2)' } },
+        React.createElement('p', { className: 'text-sm font-semibold mb-2', style: { color: '#fca5a5' } }, 'Something went wrong'),
+        React.createElement('p', { className: 'text-xs mb-4', style: { color: 'var(--text-3)' } }, this.state.error?.message || 'Unknown error'),
+        React.createElement('button', { onClick: () => this.setState({ hasError: false, error: null }), className: 'px-4 py-2 text-xs font-semibold rounded-lg cursor-pointer', style: { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' } }, 'Try Again')
+      );
+    }
+    return this.props.children;
+  }
+}
+
 /* ========== HOME SCREEN ========== */
 function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross, virginBank, setVirginBank, virginsPerCross, currentUser, transfers, onAcceptTransfer, onDeclineTransfer, onTransfer, STOCK_CATS, sentTransfers, onDismissTransfer, printListCrosses, setPrintListCrosses, printListVirgins, setPrintListVirgins, initialCrossId, expBank, setExpBank }) {
   const [showCompleted, setShowCompleted] = useState(false);
@@ -3063,15 +3227,15 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         {(isPastDeadline || isInGracePeriod || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
                           {isPastDeadline ? (
                             <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next?.key || 'evening', type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next?.key || 'evening'); }}
-                              className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                               style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear & Discard</button>
                           ) : isInGracePeriod ? (
                             <>
                               <button onClick={() => { logCrossAction(c.id, 'collect', next?.key || 'afternoon'); setCrossVcsBankPrompt({ crossId: c.id, crossName: cl(c, stocks) }); }}
-                                className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'rgba(234,179,8,0.12)', color: '#fbbf24', border: '1px solid rgba(234,179,8,0.2)' }}>Collect (late)</button>
                               <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next?.key || 'evening', type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next?.key || 'evening'); }}
-                                className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Discard</button>
                             </>
                           ) : next?.type === 'collect' || next?.type === 'collect_clear' ? (
@@ -3085,21 +3249,21 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                                   setCrossVcsBankPrompt({ crossId: c.id, crossName: cl(c, stocks) });
                                 }
                               }}
-                                className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' }}>
                                 {next.type === 'collect_clear' ? 'Collect + Clear' : 'Collected'}
                               </button>
                               <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear' }); else logCrossAction(c.id, 'clear', next.key); }}
-                                className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Clear</button>
                             </>
                           ) : next?.type === 'clear_discard' ? (
                             <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next.key); }}
-                              className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                               style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear + Discard</button>
                           ) : next?.type === 'clear' ? (
                             <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear' }); else logCrossAction(c.id, 'clear', next.key); }}
-                              className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                               style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
                               Mark Cleared</button>
                           ) : null}
@@ -3111,10 +3275,10 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                             <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#a78bfa' }}>Moved to 18°C?</p>
                             <div className="flex gap-1.5">
                               <button onClick={() => { logCrossAction(c.id, crossVcs18Confirm.type, crossVcs18Confirm.key, '18'); setCrossVcs18Confirm(null); }}
-                                className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>Yes, 18°C</button>
                               <button onClick={() => { logCrossAction(c.id, crossVcs18Confirm.type, crossVcs18Confirm.key, '25'); setCrossVcs18Confirm(null); }}
-                                className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>No, RT</button>
                             </div>
                           </div>
@@ -3138,11 +3302,11 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                                   }
                                   setCrossVcsBankPrompt(null);
                                 }}
-                                  className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                  className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                   style={{ background: 'rgba(94,234,212,0.1)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
                               ))}
                               <button onClick={() => setCrossVcsBankPrompt(null)}
-                                className="px-2 py-1 text-[11px] rounded-lg cursor-pointer"
+                                className="px-3 py-2 text-[12px] rounded-lg cursor-pointer"
                                 style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Skip</button>
                             </div>
                           </div>
@@ -3238,15 +3402,15 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                     {(isPastDeadline || isInGracePeriod || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
                       {isPastDeadline ? (
                         <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next?.key || 'evening', type: 'clear_discard' }); else logAction('clear_discard', next?.key || 'evening'); }}
-                          className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                           style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear & Discard</button>
                       ) : isInGracePeriod ? (
                         <>
                           <button onClick={() => { logAction('collect', next?.key || 'afternoon'); setVcsBankPrompt({ stockId: s.id, stockName: s.name }); }}
-                            className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(234,179,8,0.12)', color: '#fbbf24', border: '1px solid rgba(234,179,8,0.2)' }}>Collect (late)</button>
                           <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next?.key || 'evening', type: 'clear_discard' }); else logAction('clear_discard', next?.key || 'evening'); }}
-                            className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Discard</button>
                         </>
                       ) : next?.type === 'collect' || next?.type === 'collect_clear' ? (
@@ -3260,21 +3424,21 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                               setVcsBankPrompt({ stockId: s.id, stockName: s.name });
                             }
                           }}
-                            className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' }}>
                             {next.type === 'collect_clear' ? 'Collect + Clear' : 'Collected ✓'}
                           </button>
                           <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear' }); else logAction('clear', next.key); }}
-                            className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Clear</button>
                         </>
                       ) : next?.type === 'clear_discard' ? (
                         <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear_discard' }); else logAction('clear_discard', next.key); }}
-                          className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                           style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear + Discard</button>
                       ) : next?.type === 'clear' ? (
                         <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear' }); else logAction('clear', next.key); }}
-                          className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                           style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
                           Mark Cleared</button>
                       ) : null}
@@ -3286,10 +3450,10 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#a78bfa' }}>Moved to 18°C?</p>
                         <div className="flex gap-1.5">
                           <button onClick={() => { logAction(vcs18Confirm.type, vcs18Confirm.key, '18'); setVcs18Confirm(null); }}
-                            className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>Yes, 18°C</button>
                           <button onClick={() => { logAction(vcs18Confirm.type, vcs18Confirm.key, '25'); setVcs18Confirm(null); }}
-                            className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>No, RT</button>
                         </div>
                       </div>
@@ -3306,11 +3470,11 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                               toast.add(`+${n} virgins banked for ${s.name}`);
                               setVcsBankPrompt(null);
                             }}
-                              className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                               style={{ background: 'rgba(94,234,212,0.1)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
                           ))}
                           <button onClick={() => setVcsBankPrompt(null)}
-                            className="px-2 py-1 text-[11px] rounded-lg cursor-pointer"
+                            className="px-3 py-2 text-[12px] rounded-lg cursor-pointer"
                             style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Skip</button>
                         </div>
                       </div>
@@ -3496,7 +3660,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
 }
 
 /* ========== STOCKS SCREEN ========== */
-function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, printListCrosses, printListVirgins, printListExps, onOpenPrint, onBulkActive, expBank, setExpBank }) {
+function StocksScreen({ stocks, setStocks, crosses, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, printListCrosses, printListVirgins, printListExps, onOpenPrint, onBulkActive, expBank, setExpBank }) {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState(() => initialStockId ? 'all' : 'all');
   const [showAll, setShowAll] = useState(() => !!initialStockId);
@@ -3661,13 +3825,13 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         {/* Mine / All segmented control */}
         <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
           <button onClick={() => setShowAll(false)}
-            className="px-3 py-1.5 text-[11px] font-semibold transition-all active:scale-95"
+            className="px-3 py-2 text-[12px] font-semibold transition-all active:scale-95"
             style={!showAll
               ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }
               : { background: 'var(--surface-2)', color: 'var(--text-3)' }
             }>Mine</button>
           <button onClick={() => setShowAll(true)}
-            className="px-3 py-1.5 text-[11px] font-semibold transition-all active:scale-95"
+            className="px-3 py-2 text-[12px] font-semibold transition-all active:scale-95"
             style={{ borderLeft: '1px solid var(--border)',
               ...(showAll
                 ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }
@@ -3723,14 +3887,14 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       <div className="flex gap-1.5 mb-4 overflow-x-auto pb-2" style={{ WebkitOverflowScrolling: 'touch', position: 'relative', zIndex: 5 }}>
         {['all', 'expanded', ...STOCK_CATS].map(cat => (
           <button key={cat} onClick={() => setCatFilter(cat)}
-            className="px-3 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+            className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
             style={catFilter === cat
               ? { background: 'rgba(0,128,128,0.15)', color: '#5eead4', border: '1px solid rgba(0,128,128,0.3)' }
               : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
             }>{cat === 'all' ? 'All' : cat === 'expanded' ? 'Exp' : cat}</button>
         ))}
         <button onClick={() => { setAddingCat(true); setNewCatName(''); }}
-          className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+          className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
           style={{ background: 'var(--surface-2)', color: 'var(--accent-2)', border: '1px solid var(--border)' }}>+</button>
       </div>
 
@@ -3846,7 +4010,11 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       )}
 
       <StockModal stock={editing} onClose={() => setEditing(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={id => { setEditing(null); setDeleting(id); }} STOCK_CATS={STOCK_CATS} setCollections={setCollections} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} printList={printList} setPrintList={setPrintList} onMassAdd={() => { setEditing(null); setMassAdding(true); setMassAddText(''); setMassAddCat(catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter); setMassAddLoc('25inc'); }} expBank={expBank} setExpBank={setExpBank} />
-      <Confirm open={!!deleting} onOk={doDelete} onNo={() => setDeleting(null)} title="Delete stock?" msg="This stock will be permanently removed." />
+      <Confirm open={!!deleting} onOk={doDelete} onNo={() => setDeleting(null)} title="Delete stock?" msg={(() => {
+        const affectedCrosses = (crosses || []).filter(c => c.status !== 'done' && (c.parentA === deleting || c.parentB === deleting));
+        if (affectedCrosses.length > 0) return `This stock is used in ${affectedCrosses.length} active cross${affectedCrosses.length > 1 ? 'es' : ''}. Deleting it will leave ${affectedCrosses.length > 1 ? 'those crosses' : 'that cross'} with a missing parent. This stock will be permanently removed.`;
+        return 'This stock will be permanently removed.';
+      })()} />
 
       {/* Mass add stocks modal */}
       <Modal open={massAdding} onClose={() => setMassAdding(false)} title="Mass Add Stocks">
@@ -4138,8 +4306,7 @@ function VcsSetup({ f, setF, toast }) {
   const [vcsSched, setVcsSched] = React.useState(null);
   const [confirmDisable, setConfirmDisable] = React.useState(false);
 
-  React.useEffect(() => { if (vcsStep === 3 && !vcsSched) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsStep]);
-  React.useEffect(() => { if (vcsStep === 3) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsO18, vcsCpd]);
+  React.useEffect(() => { if (vcsStep === 3) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsStep, vcsO18, vcsCpd]);
 
   if (confirmDisable) return (
     <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
@@ -4883,11 +5050,15 @@ function VirginNotifSettings({ toast }) {
 }
 
 /* ========== SETTINGS SCREEN ========== */
-function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser, demoMode }) {
+function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser, demoMode, setIsDemoMode }) {
   const fileRef = useRef(null);
   const [showRef, setShowRef] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [adminPinInput, setAdminPinInput] = useState('');
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [confirmLoadDemo, setConfirmLoadDemo] = useState(false);
+  const [confirmResetPin, setConfirmResetPin] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null);
   function adminPinGate(onSuccess) {
     const floHash = localStorage.getItem('flo-pin-Flo');
     if (!floHash) { toast.add('Flo has no PIN set'); return; }
@@ -4910,17 +5081,27 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
   function importJSON(e) {
     const file = e.target.files[0];
     if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { toast.add('File too large (max 10 MB)'); e.target.value = ''; return; }
     const r = new FileReader();
     r.onload = ev => {
       try {
         const d = JSON.parse(ev.target.result);
-        if (d.stocks) setStocks(d.stocks);
-        if (d.crosses) setCrosses(d.crosses);
-        toast.add('Data imported');
-      } catch { toast.add('Invalid file'); }
+        if (d.stocks && !Array.isArray(d.stocks)) { toast.add('Invalid file: stocks is not an array'); return; }
+        if (d.crosses && !Array.isArray(d.crosses)) { toast.add('Invalid file: crosses is not an array'); return; }
+        if (!d.stocks && !d.crosses) { toast.add('Invalid file: no stocks or crosses found'); return; }
+        setPendingImport(d);
+      } catch { toast.add('Invalid JSON file'); }
     };
     r.readAsText(file);
     e.target.value = '';
+  }
+
+  function applyImport() {
+    if (!pendingImport) return;
+    if (pendingImport.stocks) setStocks(pendingImport.stocks);
+    if (pendingImport.crosses) setCrosses(pendingImport.crosses);
+    toast.add('Data imported');
+    setPendingImport(null);
   }
 
   function exportAllICS() {
@@ -4948,6 +5129,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
 
   function loadDemo() {
     demoMode.current = true;
+    if (setIsDemoMode) setIsDemoMode(true);
     const d = makeDemoData();
     setStocks(d.stocks);
     setCrosses(d.crosses);
@@ -5072,12 +5254,12 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Demo Data</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Load sample stocks and crosses.</p>
-        <Btn v="s" onClick={loadDemo} className="w-full">Load Demo Data</Btn>
+        <Btn v="s" onClick={() => setConfirmLoadDemo(true)} className="w-full">Load Demo Data</Btn>
       </div>
 
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Clear All Data</p>
-        <Btn v="d" onClick={clearAll} className="w-full mt-2">Clear Everything</Btn>
+        <Btn v="d" onClick={() => setConfirmClearAll(true)} className="w-full mt-2">Clear Everything</Btn>
       </div>
       </>
       )}
@@ -5105,10 +5287,19 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Change PIN</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Reset and set a new PIN.</p>
-        <Btn v="s" onClick={changePin} className="w-full">Reset PIN</Btn>
+        <Btn v="s" onClick={() => setConfirmResetPin(true)} className="w-full">Reset PIN</Btn>
       </div>
 
       <p className="text-[10px] text-center mt-4 mb-2" style={{ color: 'var(--text-3)' }}>Flomington</p>
+
+      <Confirm open={confirmClearAll} onOk={() => { setConfirmClearAll(false); clearAll(); }} onNo={() => setConfirmClearAll(false)}
+        title="Clear all data?" msg="This will permanently delete all stocks, crosses, and experiment data." />
+      <Confirm open={confirmLoadDemo} onOk={() => { setConfirmLoadDemo(false); loadDemo(); }} onNo={() => setConfirmLoadDemo(false)}
+        title="Load demo data?" msg="This will replace all current data. Sync will pause until you reload." okLabel="Load Demo" />
+      <Confirm open={confirmResetPin} onOk={() => { setConfirmResetPin(false); changePin(); }} onNo={() => setConfirmResetPin(false)}
+        title="Reset all user PINs?" msg="Everyone will need to set new PINs." okLabel="Reset" />
+      <Confirm open={!!pendingImport} onOk={() => { applyImport(); }} onNo={() => setPendingImport(null)}
+        title="Import data?" msg={`This will replace your current data with ${pendingImport ? (pendingImport.stocks?.length || 0) + ' stocks and ' + (pendingImport.crosses?.length || 0) + ' crosses' : ''} from the backup file.`} okLabel="Import" />
 
     </div>
   );
@@ -5818,6 +6009,14 @@ function App() {
     if (!localStorage.getItem(`flo-pin-${currentUser}`)) return true;
     return false;
   });
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  useEffect(() => {
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []);
   const [pendingUser, setPendingUser] = useState(null);
   const [tab, setTab] = useState('home');
   const [stocks, setStocks] = useLS('flo-stocks', []);
@@ -5864,6 +6063,7 @@ function App() {
   const [pinVersion, setPinVersion] = useState(0);
   const initialPushBlocked = useRef(true);
   const demoMode = useRef(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   // Pull from Supabase FIRST on load - blocks UI until done
   const hasPulled = useRef(false);
@@ -5895,6 +6095,63 @@ function App() {
           setLocked(false);
         }
       }
+      // Pull virgin bank and merge with local
+      supabasePullVirginBank(currentUser).then(remoteVB => {
+        setVirginBank(prev => {
+          const merged = { ...remoteVB };
+          Object.entries(prev).forEach(([k, v]) => {
+            if (v > 0) merged[k] = Math.max(merged[k] || 0, v);
+          });
+          return merged;
+        });
+      });
+      // Pull exp bank and merge with local
+      supabasePullExpBank(currentUser).then(remoteEB => {
+        setExpBank(prev => {
+          const merged = { ...remoteEB };
+          Object.entries(prev).forEach(([k, v]) => {
+            if ((v.m || 0) + (v.f || 0) > 0) {
+              merged[k] = {
+                m: Math.max((merged[k]?.m || 0), v.m || 0),
+                f: Math.max((merged[k]?.f || 0), v.f || 0),
+                source: v.source || merged[k]?.source || 'cross',
+              };
+            }
+          });
+          return merged;
+        });
+      });
+      // Pull transfers and merge with local (local wins for status)
+      supabasePullTransfers().then(remoteTransfers => {
+        setTransfers(prev => {
+          const localMap = new Map(prev.map(t => [t.id, t]));
+          const merged = [...prev];
+          remoteTransfers.forEach(rt => {
+            const local = localMap.get(rt.id);
+            if (!local) {
+              merged.push(rt);
+            } else if (local.status === 'pending' && rt.status !== 'pending') {
+              // Remote has been resolved but local hasn't - take remote
+              const idx = merged.findIndex(t => t.id === rt.id);
+              if (idx >= 0) merged[idx] = { ...rt, seen: local.seen };
+            }
+          });
+          // Auto-cleanup: remove resolved+seen transfers older than 7 days
+          const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+          const staleIds = [];
+          const cleaned = merged.filter(t => {
+            const isStale = t.status !== 'pending' && t.seen && new Date(t.createdAt).getTime() < sevenDaysAgo;
+            if (isStale) staleIds.push(t.id);
+            return !isStale;
+          });
+          // Delete stale transfers from Supabase
+          if (staleIds.length > 0) {
+            const sb = getSb();
+            if (sb) sb.from('transfers').delete().in('id', staleIds).then(() => {});
+          }
+          return cleaned;
+        });
+      });
       setSyncStatus('Synced ' + new Date().toLocaleTimeString());
       setTimeout(() => {
         initialPushBlocked.current = false;
@@ -5951,24 +6208,31 @@ function App() {
         setSyncStatus('Push failed – retrying...');
         setTimeout(doPush, 5000);
       });
+      supabasePushVirginBank(currentUser, virginBank).catch(e => console.error('Virgin bank push error:', e));
+      supabasePushExpBank(currentUser, expBank).catch(e => console.error('Exp bank push error:', e));
+      supabasePushTransfers(transfers).catch(e => console.error('Transfers push error:', e));
     };
     pushNow.current = doPush;
     syncTimer.current = setTimeout(doPush, 3000);
-  }, [stocks, crosses, sbConfigured, pinVersion]);
+  }, [stocks, crosses, sbConfigured, pinVersion, virginBank, expBank, transfers, currentUser]);
 
   // Flush pending push on page close/hide
   useEffect(() => {
     const flush = () => { if (pendingPush.current) pushNow.current(); };
+    const onVisChange = () => { if (document.hidden) flush(); };
     window.addEventListener('beforeunload', flush);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
-    return () => window.removeEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onVisChange);
+    return () => { window.removeEventListener('beforeunload', flush); document.removeEventListener('visibilitychange', onVisChange); };
   }, []);
 
   // Real-time subscriptions for cross-device sync
   useSupabaseRealtime(
     (updater) => { realtimeUpdateRef.current = true; setStocks(updater); },
     (updater) => { realtimeUpdateRef.current = true; setCrosses(updater); },
-    setPinVersion
+    setPinVersion,
+    (updater) => { realtimeUpdateRef.current = true; setVirginBank(updater); },
+    (updater) => { realtimeUpdateRef.current = true; setExpBank(updater); },
+    (updater) => { realtimeUpdateRef.current = true; setTransfers(updater); }
   );
 
   const [newCrossOpen, setNewCrossOpen] = useState(false);
@@ -6099,6 +6363,8 @@ function App() {
   function createTransfer(t) {
     const transfer = { id: uid(), from: currentUser, status: 'pending', createdAt: today(), ...t };
     setTransfers(p => [...p, transfer]);
+    // Push immediately for instant cross-device visibility
+    supabasePushTransfers([transfer]).catch(e => console.error('Transfer immediate push error:', e));
     toast.add(`Transfer request sent to ${t.to}`);
   }
 
@@ -6112,14 +6378,29 @@ function App() {
 
       {/* Header */}
       <header className="px-4 py-3 sticky top-0 z-20" style={{ background: 'rgba(9,9,11,0.8)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)', borderBottom: '1px solid var(--border)' }}>
-        <div className="max-w-6xl mx-auto flex items-center justify-between" style={{ position: 'relative' }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="flex items-center justify-between">
           <h1 className="text-lg font-extrabold tracking-tight cursor-pointer" onClick={() => setTab('home')} style={{ color: 'var(--text-1)' }}>Flomington</h1>
-          <select value={currentUser} onChange={e => handleUserSwitch(e.target.value)}
-            className="px-4 py-1.5 text-sm font-semibold rounded-xl" style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)', outline: 'none', textAlign: 'center', position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-            {USERS.map(u => <option key={u} value={u}>{u}</option>)}
-          </select>
-          <div className="flex items-center gap-3">
-            <span className="text-xs" style={{ color: 'var(--text-3)', cursor: 'default', userSelect: 'none' }} onDoubleClick={() => window.__spawnFly && window.__spawnFly()}>{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+          <div className="flex items-center gap-2">
+            <select value={currentUser} onChange={e => handleUserSwitch(e.target.value)}
+              className="px-4 py-1.5 text-sm font-semibold rounded-xl" style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)', outline: 'none', textAlign: 'center' }}>
+              {USERS.map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+            <span className="text-xs hidden md:inline" style={{ color: 'var(--text-3)', cursor: 'default', userSelect: 'none' }} onDoubleClick={() => window.__spawnFly && window.__spawnFly()}>{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+            {!isOnline && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold"
+                style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>Offline</span>
+            )}
+            {syncStatus && (
+              <div className="flex items-center gap-1" title={syncStatus}>
+                <div className="w-1.5 h-1.5 rounded-full" style={{
+                  background: syncStatus.startsWith('Synced') ? '#22c55e' :
+                              syncStatus.includes('failed') || syncStatus.includes('error') ? '#ef4444' :
+                              syncStatus.includes('Sync') ? '#eab308' : 'var(--text-3)',
+                  animation: syncStatus.includes('Sync') && !syncStatus.startsWith('Synced') ? 'pulse 1s infinite' : 'none'
+                }} />
+              </div>
+            )}
             <button onClick={() => setTab('settings')} className="touch"
               style={{ background: 'none', border: 'none', padding: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={tab === 'settings' ? 'var(--accent-2)' : 'var(--text-3)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -6127,13 +6408,24 @@ function App() {
               </svg>
             </button>
           </div>
+          </div>
+          <div className="md:hidden text-center mt-1">
+            <span className="text-xs" style={{ color: 'var(--text-3)' }}>{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+          </div>
         </div>
       </header>
+
+      {isDemoMode && (
+        <div className="sticky top-[49px] z-[19] px-4 py-2 text-center text-xs font-semibold"
+          style={{ background: 'rgba(217,119,6,0.15)', color: '#fbbf24', borderBottom: '1px solid rgba(217,119,6,0.25)', backdropFilter: 'blur(8px)' }}>
+          Demo mode - changes not synced. Reload to exit.
+        </div>
+      )}
 
       {/* Main content */}
       <main className="flex-1 overflow-y-auto pb-28" style={{ position: 'relative', zIndex: 1 }}>
         <div className="max-w-6xl mx-auto px-6 py-6">
-          {tab === 'home' && <HomeScreen stocks={stocks} setStocks={setStocks} crosses={crosses} setCrosses={setCrosses} toast={toast} onNewCross={() => setNewCrossOpen(true)} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} currentUser={currentUser} onTransfer={createTransfer} transfers={myTransfers} onAcceptTransfer={(t) => {
+          {tab === 'home' && <ErrorBoundary><HomeScreen stocks={stocks} setStocks={setStocks} crosses={crosses} setCrosses={setCrosses} toast={toast} onNewCross={() => setNewCrossOpen(true)} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} currentUser={currentUser} onTransfer={createTransfer} transfers={myTransfers} onAcceptTransfer={(t) => {
             if (t.type === 'stock') { markEdited(t.itemId); setStocks(p => p.map(s => s.id === t.itemId ? { ...s, maintainer: currentUser } : s)); }
             else if (t.type === 'cross') { markEdited(t.itemId); setCrosses(p => p.map(c => c.id === t.itemId ? { ...c, owner: currentUser } : c)); }
             else if (t.type === 'collection') { stocks.filter(s => (s.category || 'No Collection') === t.collection && s.maintainer === t.from).forEach(s => markEdited(s.id)); setStocks(p => p.map(s => (s.category || 'No Collection') === t.collection && s.maintainer === t.from ? { ...s, maintainer: currentUser } : s)); }
@@ -6144,11 +6436,11 @@ function App() {
             toast.add('Transfer declined');
           }} STOCK_CATS={STOCK_CATS} sentTransfers={sentResolved} onDismissTransfer={(t) => {
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
-          }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} />}
-          {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} />}
-          {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} />}
-          {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} />}
-          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} />}
+          }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
+          {tab === 'stocks' && <ErrorBoundary><StocksScreen stocks={stocks} setStocks={setStocks} crosses={crosses} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
+          {tab === 'virgins' && <ErrorBoundary><VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} /></ErrorBoundary>}
+          {tab === 'exp' && <ErrorBoundary><ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} /></ErrorBoundary>}
+          {tab === 'settings' && <ErrorBoundary><SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} setIsDemoMode={setIsDemoMode} /></ErrorBoundary>}
         </div>
       </main>
 

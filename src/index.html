@@ -6088,14 +6088,31 @@ function App() {
       let vcsBackfilled = false;
       if (remote.stocks) setStocks(prev => {
         const localMap = new Map(prev.map(s => [s.id, s]));
-        const merged = remote.stocks.map(rs => {
-          const local = localMap.get(rs.id);
-          if (local?.vcs && !rs.vcs) { vcsBackfilled = true; return { ...rs, vcs: local.vcs }; }
-          return rs;
+        const remoteIds = new Set(remote.stocks.map(s => s.id));
+        // Start with local items that exist in both (local wins)
+        const merged = prev.filter(s => remoteIds.has(s.id));
+        // Check for vcs backfill needs
+        merged.forEach(s => {
+          const rs = remote.stocks.find(r => r.id === s.id);
+          if (s.vcs && rs && !rs.vcs) vcsBackfilled = true;
+        });
+        // Add remote-only items (new from other devices)
+        remote.stocks.forEach(rs => {
+          if (!localMap.has(rs.id)) merged.push(rs);
         });
         return merged;
       });
-      if (remote.crosses) setCrosses(remote.crosses);
+      if (remote.crosses) setCrosses(prev => {
+        const localMap = new Map(prev.map(c => [c.id, c]));
+        const remoteIds = new Set(remote.crosses.map(c => c.id));
+        // Local items that exist in both (local wins)
+        const merged = prev.filter(c => remoteIds.has(c.id));
+        // Add remote-only items
+        remote.crosses.forEach(rc => {
+          if (!localMap.has(rc.id)) merged.push(rc);
+        });
+        return merged;
+      });
       if (remote.pins && remote.pins.length > 0) {
         let pinSynced = false;
         remote.pins.forEach(p => {
@@ -6108,21 +6125,21 @@ function App() {
           setLocked(false);
         }
       }
-      // Pull virgin bank — remote wins (Supabase is source of truth)
+      // Pull virgin bank — local wins for existing entries
       supabasePullVirginBank(currentUser).then(remoteVB => {
-        setVirginBank(remoteVB);
+        setVirginBank(prev => ({ ...remoteVB, ...prev }));
       });
-      // Pull exp bank — remote wins
+      // Pull exp bank — local wins for existing entries
       supabasePullExpBank(currentUser).then(remoteEB => {
-        setExpBank(remoteEB);
+        setExpBank(prev => ({ ...remoteEB, ...prev }));
       });
-      // Pull transfers — remote wins, preserve local 'seen' state
+      // Pull transfers — local wins for existing entries
       supabasePullTransfers().then(remoteTransfers => {
         setTransfers(prev => {
           const localMap = new Map(prev.map(t => [t.id, t]));
           const transfers = remoteTransfers.map(rt => {
             const local = localMap.get(rt.id);
-            return local ? { ...rt, seen: local.seen } : rt;
+            return local || rt;
           });
           // Auto-cleanup: remove resolved+seen transfers older than 7 days
           const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -6178,7 +6195,7 @@ function App() {
   const pushNow = useRef(() => {});
   useEffect(() => {
     if (!sbConfigured || initialPushBlocked.current || demoMode.current) return;
-    if (realtimeUpdateRef.current) { realtimeUpdateRef.current = false; if (!pendingPush.current) return; }
+    if (realtimeUpdateRef.current || pullInProgress.current) { realtimeUpdateRef.current = false; if (!pendingPush.current) return; }
     pendingPush.current = true;
     clearTimeout(syncTimer.current);
     const doPush = () => {
@@ -6214,40 +6231,42 @@ function App() {
 
   // Re-pull auxiliary data (virgin bank, exp bank, transfers) from Supabase
   const lastRePull = useRef(0);
+  const pullInProgress = useRef(false);
   const rePullAux = useCallback(() => {
     if (!sbConfigured || demoMode.current || pendingPush.current) return;
     const now = Date.now();
     if (now - lastRePull.current < 10000) return; // throttle: max once per 10s
     lastRePull.current = now;
-    // Remote wins only when remote actually changed, but local deletes always win
+    pullInProgress.current = true;
+    let pending = 3;
+    const done = () => { if (--pending === 0) pullInProgress.current = false; };
+    // Local wins for existing entries, remote adds new ones; local deletes always win
     supabasePullVirginBank(currentUser).then(remoteVB => {
-      // Filter out locally deleted entries
       const filtered = { ...remoteVB };
       Object.keys(filtered).forEach(k => { if (isDeletedAux('vb:' + k)) delete filtered[k]; });
+      realtimeUpdateRef.current = true;
       setVirginBank(prev => {
-        const remoteKeys = new Set(Object.keys(filtered));
-        const localKeys = new Set(Object.keys(prev));
-        if (remoteKeys.size === localKeys.size &&
-            [...remoteKeys].every(k => localKeys.has(k) && prev[k] === filtered[k])) return prev;
-        return filtered;
+        const merged = { ...filtered, ...prev };
+        if (JSON.stringify(merged) === JSON.stringify(prev)) return prev;
+        return merged;
       });
+      done();
     });
     supabasePullExpBank(currentUser).then(remoteEB => {
       const filtered = { ...remoteEB };
       Object.keys(filtered).forEach(k => { if (isDeletedAux('eb:' + k)) delete filtered[k]; });
+      realtimeUpdateRef.current = true;
       setExpBank(prev => {
-        const remoteKeys = new Set(Object.keys(filtered));
-        const localKeys = new Set(Object.keys(prev));
-        if (remoteKeys.size === localKeys.size &&
-            [...remoteKeys].every(k => localKeys.has(k) &&
-              prev[k]?.m === filtered[k]?.m && prev[k]?.f === filtered[k]?.f)) return prev;
-        return filtered;
+        const merged = { ...filtered, ...prev };
+        if (JSON.stringify(merged) === JSON.stringify(prev)) return prev;
+        return merged;
       });
+      done();
     });
     supabasePullTransfers().then(remoteTransfers => {
+      realtimeUpdateRef.current = true;
       setTransfers(prev => {
         const localMap = new Map(prev.map(t => [t.id, t]));
-        // Only update if remote set differs from local
         const remoteIds = new Set(remoteTransfers.map(t => t.id));
         const localIds = new Set(prev.map(t => t.id));
         const changed = remoteIds.size !== localIds.size ||
@@ -6262,6 +6281,7 @@ function App() {
           return local ? { ...rt, seen: local.seen } : rt;
         });
       });
+      done();
     });
   }, [sbConfigured, currentUser]);
 

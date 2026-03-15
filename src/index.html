@@ -4761,6 +4761,8 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross,
 
   function clearStock(stockId) {
     setVirginBank(prev => { const next = { ...prev }; delete next[stockId]; return next; });
+    const sb = getSb();
+    if (sb) sb.from('virgin_banks').delete().eq('user_name', currentUser).eq('stock_id', stockId).then(() => {});
     toast.add('Cleared');
   }
 
@@ -4869,6 +4871,8 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps,
 
   function clearEntry(sourceId) {
     setExpBank(prev => { const next = { ...prev }; delete next[sourceId]; return next; });
+    const sb = getSb();
+    if (sb) sb.from('exp_banks').delete().eq('user_name', currentUser).eq('source_id', sourceId).then(() => {});
     toast.add('Cleared');
   }
 
@@ -6108,7 +6112,10 @@ function App() {
       // Pull exp bank and merge with local
       supabasePullExpBank(currentUser).then(remoteEB => {
         setExpBank(prev => {
-          const merged = { ...remoteEB };
+          const merged = {};
+          // Start with remote entries
+          Object.entries(remoteEB).forEach(([k, v]) => { merged[k] = v; });
+          // Local entries override remote (local wins)
           Object.entries(prev).forEach(([k, v]) => {
             if ((v.m || 0) + (v.f || 0) > 0) {
               merged[k] = {
@@ -6116,6 +6123,8 @@ function App() {
                 f: Math.max((merged[k]?.f || 0), v.f || 0),
                 source: v.source || merged[k]?.source || 'cross',
               };
+            } else {
+              delete merged[k]; // locally cleared = remove
             }
           });
           return merged;

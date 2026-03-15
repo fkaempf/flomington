@@ -604,6 +604,33 @@ async function supabasePullExpBank(userName) {
   return bank;
 }
 
+async function supabasePushTransfers(transfers) {
+  const sb = getSb();
+  if (!sb || !transfers?.length) return;
+  const rows = transfers.map(t => ({
+    id: t.id, from_user: t.from, to_user: t.to,
+    transfer_type: t.type, item_id: t.itemId || null,
+    collection_name: t.collection || null,
+    display_name: t.name, status: t.status || 'pending',
+    seen: t.seen || false, created_at: t.createdAt || new Date().toISOString(),
+  }));
+  const { error } = await sb.from('transfers').upsert(rows, { onConflict: 'id' });
+  if (error) console.error('Transfers push failed:', error);
+}
+
+async function supabasePullTransfers() {
+  const sb = getSb();
+  if (!sb) return [];
+  const { data, error } = await sb.from('transfers').select('*');
+  if (error || !data) return [];
+  return data.map(row => ({
+    id: row.id, from: row.from_user, to: row.to_user,
+    type: row.transfer_type, itemId: row.item_id,
+    collection: row.collection_name, name: row.display_name,
+    status: row.status, seen: row.seen || false, createdAt: row.created_at,
+  }));
+}
+
 function mergeStocks(local, remote) {
   const merged = [...local];
   const localIds = new Set(local.map(s => s.id));
@@ -639,7 +666,7 @@ function supabaseDeleteNow(table, id) {
   sb.from(table).delete().eq('id', id).then(() => {});
 }
 
-function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank, setExpBank) {
+function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank, setExpBank, setTransfers) {
   const subRef = React.useRef(null);
   React.useEffect(() => {
     const sb = getSb();
@@ -706,6 +733,24 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank
           });
         } else if (payload.eventType === 'DELETE' && payload.old?.source_id) {
           if (setExpBank) setExpBank(prev => { const next = { ...prev }; delete next[payload.old.source_id]; return next; });
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transfers' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const row = payload.new;
+          const item = {
+            id: row.id, from: row.from_user, to: row.to_user,
+            type: row.transfer_type, itemId: row.item_id,
+            collection: row.collection_name, name: row.display_name,
+            status: row.status, seen: row.seen || false, createdAt: row.created_at,
+          };
+          if (setTransfers) setTransfers(prev => {
+            const idx = prev.findIndex(t => t.id === item.id);
+            if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...item }; return next; }
+            return [...prev, item];
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.id) {
+          if (setTransfers) setTransfers(prev => prev.filter(t => t.id !== payload.old.id));
         }
       })
       .subscribe();
@@ -4977,7 +5022,7 @@ function VirginNotifSettings({ toast }) {
 }
 
 /* ========== SETTINGS SCREEN ========== */
-function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser, demoMode }) {
+function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser, demoMode, setIsDemoMode }) {
   const fileRef = useRef(null);
   const [showRef, setShowRef] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -5008,17 +5053,27 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
   function importJSON(e) {
     const file = e.target.files[0];
     if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { toast.add('File too large (max 10 MB)'); e.target.value = ''; return; }
     const r = new FileReader();
     r.onload = ev => {
       try {
         const d = JSON.parse(ev.target.result);
-        if (d.stocks) setStocks(d.stocks);
-        if (d.crosses) setCrosses(d.crosses);
-        toast.add('Data imported');
-      } catch { toast.add('Invalid file'); }
+        if (d.stocks && !Array.isArray(d.stocks)) { toast.add('Invalid file: stocks is not an array'); return; }
+        if (d.crosses && !Array.isArray(d.crosses)) { toast.add('Invalid file: crosses is not an array'); return; }
+        if (!d.stocks && !d.crosses) { toast.add('Invalid file: no stocks or crosses found'); return; }
+        setPendingImport(d);
+      } catch { toast.add('Invalid JSON file'); }
     };
     r.readAsText(file);
     e.target.value = '';
+  }
+
+  function applyImport() {
+    if (!pendingImport) return;
+    if (pendingImport.stocks) setStocks(pendingImport.stocks);
+    if (pendingImport.crosses) setCrosses(pendingImport.crosses);
+    toast.add('Data imported');
+    setPendingImport(null);
   }
 
   function exportAllICS() {
@@ -5046,6 +5101,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
 
   function loadDemo() {
     demoMode.current = true;
+    if (setIsDemoMode) setIsDemoMode(true);
     const d = makeDemoData();
     setStocks(d.stocks);
     setCrosses(d.crosses);
@@ -5170,12 +5226,12 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Demo Data</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Load sample stocks and crosses.</p>
-        <Btn v="s" onClick={loadDemo} className="w-full">Load Demo Data</Btn>
+        <Btn v="s" onClick={() => setConfirmLoadDemo(true)} className="w-full">Load Demo Data</Btn>
       </div>
 
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Clear All Data</p>
-        <Btn v="d" onClick={clearAll} className="w-full mt-2">Clear Everything</Btn>
+        <Btn v="d" onClick={() => setConfirmClearAll(true)} className="w-full mt-2">Clear Everything</Btn>
       </div>
       </>
       )}
@@ -5203,10 +5259,19 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Change PIN</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Reset and set a new PIN.</p>
-        <Btn v="s" onClick={changePin} className="w-full">Reset PIN</Btn>
+        <Btn v="s" onClick={() => setConfirmResetPin(true)} className="w-full">Reset PIN</Btn>
       </div>
 
       <p className="text-[10px] text-center mt-4 mb-2" style={{ color: 'var(--text-3)' }}>Flomington</p>
+
+      <Confirm open={confirmClearAll} onOk={() => { setConfirmClearAll(false); clearAll(); }} onNo={() => setConfirmClearAll(false)}
+        title="Clear all data?" msg="This will permanently delete all stocks, crosses, and experiment data." />
+      <Confirm open={confirmLoadDemo} onOk={() => { setConfirmLoadDemo(false); loadDemo(); }} onNo={() => setConfirmLoadDemo(false)}
+        title="Load demo data?" msg="This will replace all current data. Sync will pause until you reload." okLabel="Load Demo" />
+      <Confirm open={confirmResetPin} onOk={() => { setConfirmResetPin(false); changePin(); }} onNo={() => setConfirmResetPin(false)}
+        title="Reset all user PINs?" msg="Everyone will need to set new PINs." okLabel="Reset" />
+      <Confirm open={!!pendingImport} onOk={() => { applyImport(); }} onNo={() => setPendingImport(null)}
+        title="Import data?" msg={`This will replace your current data with ${pendingImport ? (pendingImport.stocks?.length || 0) + ' stocks and ' + (pendingImport.crosses?.length || 0) + ' crosses' : ''} from the backup file.`} okLabel="Import" />
 
     </div>
   );
@@ -5962,6 +6027,7 @@ function App() {
   const [pinVersion, setPinVersion] = useState(0);
   const initialPushBlocked = useRef(true);
   const demoMode = useRef(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   // Pull from Supabase FIRST on load - blocks UI until done
   const hasPulled = useRef(false);
@@ -6014,6 +6080,24 @@ function App() {
                 f: Math.max((merged[k]?.f || 0), v.f || 0),
                 source: v.source || merged[k]?.source || 'cross',
               };
+            }
+          });
+          return merged;
+        });
+      });
+      // Pull transfers and merge with local (local wins for status)
+      supabasePullTransfers().then(remoteTransfers => {
+        setTransfers(prev => {
+          const localMap = new Map(prev.map(t => [t.id, t]));
+          const merged = [...prev];
+          remoteTransfers.forEach(rt => {
+            const local = localMap.get(rt.id);
+            if (!local) {
+              merged.push(rt);
+            } else if (local.status === 'pending' && rt.status !== 'pending') {
+              // Remote has been resolved but local hasn't - take remote
+              const idx = merged.findIndex(t => t.id === rt.id);
+              if (idx >= 0) merged[idx] = { ...rt, seen: local.seen };
             }
           });
           return merged;
@@ -6077,10 +6161,11 @@ function App() {
       });
       supabasePushVirginBank(currentUser, virginBank).catch(e => console.error('Virgin bank push error:', e));
       supabasePushExpBank(currentUser, expBank).catch(e => console.error('Exp bank push error:', e));
+      supabasePushTransfers(transfers).catch(e => console.error('Transfers push error:', e));
     };
     pushNow.current = doPush;
     syncTimer.current = setTimeout(doPush, 3000);
-  }, [stocks, crosses, sbConfigured, pinVersion, virginBank, expBank]);
+  }, [stocks, crosses, sbConfigured, pinVersion, virginBank, expBank, transfers]);
 
   // Flush pending push on page close/hide
   useEffect(() => {
@@ -6096,7 +6181,8 @@ function App() {
     (updater) => { realtimeUpdateRef.current = true; setCrosses(updater); },
     setPinVersion,
     (updater) => { realtimeUpdateRef.current = true; setVirginBank(updater); },
-    (updater) => { realtimeUpdateRef.current = true; setExpBank(updater); }
+    (updater) => { realtimeUpdateRef.current = true; setExpBank(updater); },
+    (updater) => { realtimeUpdateRef.current = true; setTransfers(updater); }
   );
 
   const [newCrossOpen, setNewCrossOpen] = useState(false);
@@ -6227,6 +6313,8 @@ function App() {
   function createTransfer(t) {
     const transfer = { id: uid(), from: currentUser, status: 'pending', createdAt: today(), ...t };
     setTransfers(p => [...p, transfer]);
+    // Push immediately for instant cross-device visibility
+    supabasePushTransfers([transfer]).catch(e => console.error('Transfer immediate push error:', e));
     toast.add(`Transfer request sent to ${t.to}`);
   }
 
@@ -6258,6 +6346,13 @@ function App() {
         </div>
       </header>
 
+      {isDemoMode && (
+        <div className="sticky top-[49px] z-[19] px-4 py-2 text-center text-xs font-semibold"
+          style={{ background: 'rgba(217,119,6,0.15)', color: '#fbbf24', borderBottom: '1px solid rgba(217,119,6,0.25)', backdropFilter: 'blur(8px)' }}>
+          Demo mode - changes not synced. Reload to exit.
+        </div>
+      )}
+
       {/* Main content */}
       <main className="flex-1 overflow-y-auto pb-28" style={{ position: 'relative', zIndex: 1 }}>
         <div className="max-w-6xl mx-auto px-6 py-6">
@@ -6276,7 +6371,7 @@ function App() {
           {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} />}
           {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} />}
-          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} />}
+          {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} setIsDemoMode={setIsDemoMode} />}
         </div>
       </main>
 

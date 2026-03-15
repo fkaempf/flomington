@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#09090b">
 <title>Flomington</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cellipse cx='8' cy='15' rx='7' ry='3.5' fill='%23c4b5fd' opacity='.4' transform='rotate(-15 16 13)'/%3E%3Cellipse cx='24' cy='15' rx='7' ry='3.5' fill='%23c4b5fd' opacity='.4' transform='rotate(15 16 13)'/%3E%3Cpath d='M13 15 Q10 17 8 20' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M19 15 Q22 17 24 20' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M12.5 18 Q9 20 7 23' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M19.5 18 Q23 20 25 23' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M13 21 Q10 24 9 27' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cpath d='M19 21 Q22 24 23 27' stroke='%237c3aed' stroke-width='.8' fill='none' opacity='.5'/%3E%3Cellipse cx='16' cy='21' rx='5' ry='7.5' fill='%237c3aed'/%3E%3Cellipse cx='16' cy='13' rx='4' ry='4' fill='%238b5cf6'/%3E%3Ccircle cx='16' cy='8' r='3.5' fill='%23a78bfa'/%3E%3Ccircle cx='14' cy='7' r='1.8' fill='%23ef4444'/%3E%3Ccircle cx='18' cy='7' r='1.8' fill='%23ef4444'/%3E%3Ccircle cx='13.6' cy='6.4' r='.5' fill='%23fca5a5' opacity='.8'/%3E%3Ccircle cx='17.6' cy='6.4' r='.5' fill='%23fca5a5' opacity='.8'/%3E%3Cellipse cx='16' cy='19' rx='4' ry='.5' fill='%236d28d9' opacity='.3'/%3E%3Cellipse cx='16' cy='22' rx='3.3' ry='.4' fill='%236d28d9' opacity='.3'/%3E%3Cellipse cx='16' cy='25' rx='2.2' ry='.3' fill='%236d28d9' opacity='.3'/%3E%3C/svg%3E">
@@ -355,7 +355,7 @@ input:focus, textarea:focus, select:focus {
 /* ===== Floating nav ===== */
 .bottom-nav {
   position: fixed;
-  bottom: 16px;
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
@@ -884,17 +884,19 @@ function computeNextActions(vcs, now) {
   // Only count actions from the current window (since last clear)
   const doneKeys = new Set();
   const clearMs = lastClearTime ? new Date(lastClearTime).getTime() : 0;
+  const nowMs = now.getTime();
+
+  // Compute deadline from last clear
+  const deadline = lastClearTime ? clearMs + windowMs : null;
+  const cycleExpired = deadline && nowMs > deadline + 30 * 60000;
+
   // The clear that set lastClearTime IS the evening clear - auto-mark it done
   if (lastClearTime) doneKeys.add('evening');
   (todayActions || []).forEach(a => {
     if (!a.key) return;
     const actionMs = a.time ? new Date(a.time).getTime() : 0;
-    if (actionMs >= clearMs) doneKeys.add(a.key);
+    if (actionMs >= clearMs && !cycleExpired) doneKeys.add(a.key);
   });
-
-  // Compute deadline from last clear
-  const deadline = lastClearTime ? clearMs + windowMs : null;
-  const nowMs = now.getTime();
 
   // Fixed schedule times - no dynamic shift. Deadline moves with actual clear time.
   const result = [];
@@ -1939,7 +1941,7 @@ function Modal({ open, onClose, title, children, wide }) {
         {title && (
           <div className="flex items-center justify-between mb-5">
             <h3 className="text-base font-bold" style={{ color: 'var(--text-1)' }}>{title}</h3>
-            <button onClick={onClose} className="touch rounded-full w-8 h-8 flex items-center justify-center transition-all active:scale-90 hover:opacity-80" style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' }}>
+            <button onClick={onClose} className="touch rounded-full w-10 h-10 flex items-center justify-center transition-all active:scale-90 hover:opacity-80" style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' }}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg>
             </button>
           </div>
@@ -3204,15 +3206,15 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         {(isPastDeadline || isInGracePeriod || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
                           {isPastDeadline ? (
                             <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next?.key || 'evening', type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next?.key || 'evening'); }}
-                              className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                               style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear & Discard</button>
                           ) : isInGracePeriod ? (
                             <>
                               <button onClick={() => { logCrossAction(c.id, 'collect', next?.key || 'afternoon'); setCrossVcsBankPrompt({ crossId: c.id, crossName: cl(c, stocks) }); }}
-                                className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'rgba(234,179,8,0.12)', color: '#fbbf24', border: '1px solid rgba(234,179,8,0.2)' }}>Collect (late)</button>
                               <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next?.key || 'evening', type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next?.key || 'evening'); }}
-                                className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Discard</button>
                             </>
                           ) : next?.type === 'collect' || next?.type === 'collect_clear' ? (
@@ -3226,21 +3228,21 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                                   setCrossVcsBankPrompt({ crossId: c.id, crossName: cl(c, stocks) });
                                 }
                               }}
-                                className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' }}>
                                 {next.type === 'collect_clear' ? 'Collect + Clear' : 'Collected'}
                               </button>
                               <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear' }); else logCrossAction(c.id, 'clear', next.key); }}
-                                className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Clear</button>
                             </>
                           ) : next?.type === 'clear_discard' ? (
                             <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next.key); }}
-                              className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                               style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear + Discard</button>
                           ) : next?.type === 'clear' ? (
                             <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear' }); else logCrossAction(c.id, 'clear', next.key); }}
-                              className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                               style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
                               Mark Cleared</button>
                           ) : null}
@@ -3252,10 +3254,10 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                             <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#a78bfa' }}>Moved to 18°C?</p>
                             <div className="flex gap-1.5">
                               <button onClick={() => { logCrossAction(c.id, crossVcs18Confirm.type, crossVcs18Confirm.key, '18'); setCrossVcs18Confirm(null); }}
-                                className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>Yes, 18°C</button>
                               <button onClick={() => { logCrossAction(c.id, crossVcs18Confirm.type, crossVcs18Confirm.key, '25'); setCrossVcs18Confirm(null); }}
-                                className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                 style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>No, RT</button>
                             </div>
                           </div>
@@ -3279,11 +3281,11 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                                   }
                                   setCrossVcsBankPrompt(null);
                                 }}
-                                  className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                  className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                   style={{ background: 'rgba(94,234,212,0.1)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
                               ))}
                               <button onClick={() => setCrossVcsBankPrompt(null)}
-                                className="px-2 py-1 text-[11px] rounded-lg cursor-pointer"
+                                className="px-3 py-2 text-[12px] rounded-lg cursor-pointer"
                                 style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Skip</button>
                             </div>
                           </div>
@@ -3379,15 +3381,15 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                     {(isPastDeadline || isInGracePeriod || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
                       {isPastDeadline ? (
                         <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next?.key || 'evening', type: 'clear_discard' }); else logAction('clear_discard', next?.key || 'evening'); }}
-                          className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                           style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear & Discard</button>
                       ) : isInGracePeriod ? (
                         <>
                           <button onClick={() => { logAction('collect', next?.key || 'afternoon'); setVcsBankPrompt({ stockId: s.id, stockName: s.name }); }}
-                            className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(234,179,8,0.12)', color: '#fbbf24', border: '1px solid rgba(234,179,8,0.2)' }}>Collect (late)</button>
                           <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next?.key || 'evening', type: 'clear_discard' }); else logAction('clear_discard', next?.key || 'evening'); }}
-                            className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Discard</button>
                         </>
                       ) : next?.type === 'collect' || next?.type === 'collect_clear' ? (
@@ -3401,21 +3403,21 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                               setVcsBankPrompt({ stockId: s.id, stockName: s.name });
                             }
                           }}
-                            className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' }}>
                             {next.type === 'collect_clear' ? 'Collect + Clear' : 'Collected ✓'}
                           </button>
                           <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear' }); else logAction('clear', next.key); }}
-                            className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Clear</button>
                         </>
                       ) : next?.type === 'clear_discard' ? (
                         <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear_discard' }); else logAction('clear_discard', next.key); }}
-                          className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                           style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear + Discard</button>
                       ) : next?.type === 'clear' ? (
                         <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear' }); else logAction('clear', next.key); }}
-                          className="flex-1 px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                           style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
                           Mark Cleared</button>
                       ) : null}
@@ -3427,10 +3429,10 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#a78bfa' }}>Moved to 18°C?</p>
                         <div className="flex gap-1.5">
                           <button onClick={() => { logAction(vcs18Confirm.type, vcs18Confirm.key, '18'); setVcs18Confirm(null); }}
-                            className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>Yes, 18°C</button>
                           <button onClick={() => { logAction(vcs18Confirm.type, vcs18Confirm.key, '25'); setVcs18Confirm(null); }}
-                            className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                             style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>No, RT</button>
                         </div>
                       </div>
@@ -3447,11 +3449,11 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                               toast.add(`+${n} virgins banked for ${s.name}`);
                               setVcsBankPrompt(null);
                             }}
-                              className="flex-1 px-2 py-1 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                               style={{ background: 'rgba(94,234,212,0.1)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
                           ))}
                           <button onClick={() => setVcsBankPrompt(null)}
-                            className="px-2 py-1 text-[11px] rounded-lg cursor-pointer"
+                            className="px-3 py-2 text-[12px] rounded-lg cursor-pointer"
                             style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Skip</button>
                         </div>
                       </div>
@@ -3802,13 +3804,13 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         {/* Mine / All segmented control */}
         <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
           <button onClick={() => setShowAll(false)}
-            className="px-3 py-1.5 text-[11px] font-semibold transition-all active:scale-95"
+            className="px-3 py-2 text-[12px] font-semibold transition-all active:scale-95"
             style={!showAll
               ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }
               : { background: 'var(--surface-2)', color: 'var(--text-3)' }
             }>Mine</button>
           <button onClick={() => setShowAll(true)}
-            className="px-3 py-1.5 text-[11px] font-semibold transition-all active:scale-95"
+            className="px-3 py-2 text-[12px] font-semibold transition-all active:scale-95"
             style={{ borderLeft: '1px solid var(--border)',
               ...(showAll
                 ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }
@@ -3864,14 +3866,14 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
       <div className="flex gap-1.5 mb-4 overflow-x-auto pb-2" style={{ WebkitOverflowScrolling: 'touch', position: 'relative', zIndex: 5 }}>
         {['all', 'expanded', ...STOCK_CATS].map(cat => (
           <button key={cat} onClick={() => setCatFilter(cat)}
-            className="px-3 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+            className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
             style={catFilter === cat
               ? { background: 'rgba(0,128,128,0.15)', color: '#5eead4', border: '1px solid rgba(0,128,128,0.3)' }
               : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
             }>{cat === 'all' ? 'All' : cat === 'expanded' ? 'Exp' : cat}</button>
         ))}
         <button onClick={() => { setAddingCat(true); setNewCatName(''); }}
-          className="px-2 py-1.5 text-[11px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+          className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
           style={{ background: 'var(--surface-2)', color: 'var(--accent-2)', border: '1px solid var(--border)' }}>+</button>
       </div>
 

@@ -82,7 +82,7 @@ export default function PinLock({ onUnlock, user, onSelectUser, onPinSet }) {
       </div>
       <p className="text-sm mb-6" style={{ color: 'var(--text-2)' }}>{label}</p>
       {mode === 'select' ? (
-        <div className="grid grid-cols-2 gap-3 w-72">
+        <div className="grid grid-cols-2 gap-3 w-72 mx-auto">
           {USERS.map(u => (
             <button key={u} onClick={() => pickUser(u)}
               className="px-4 py-4 text-sm font-semibold rounded-xl transition-all active:scale-95"

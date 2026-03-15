@@ -522,13 +522,13 @@ function App() {
       {/* Header */}
       <header className="px-4 py-3 sticky top-0 z-20" style={{ background: 'rgba(9,9,11,0.8)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)', borderBottom: '1px solid var(--border)' }}>
         <div className="max-w-6xl mx-auto">
-          <div className="flex items-center justify-between">
+          <div className="grid items-center" style={{ gridTemplateColumns: '1fr auto 1fr' }}>
           <h1 className="text-lg font-extrabold tracking-tight cursor-pointer" onClick={() => setTab('home')} style={{ color: 'var(--text-1)' }}>Flomington</h1>
-          <div className="flex items-center gap-2">
-            <select value={currentUser} onChange={e => handleUserSwitch(e.target.value)}
-              className="px-4 py-1.5 text-sm font-semibold rounded-xl" style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)', outline: 'none', textAlign: 'center' }}>
-              {USERS.map(u => <option key={u} value={u}>{u}</option>)}
-            </select>
+          <select value={currentUser} onChange={e => handleUserSwitch(e.target.value)}
+            className="px-4 py-1.5 text-sm font-semibold rounded-xl" style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)', outline: 'none', textAlign: 'center' }}>
+            {USERS.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+          <div className="flex items-center gap-2 justify-end">
             <span className="text-xs hidden md:inline" style={{ color: 'var(--text-3)', cursor: 'default', userSelect: 'none' }} onDoubleClick={() => window.__spawnFly && window.__spawnFly()}>{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
             {!isOnline && (
               <span className="px-2 py-0.5 rounded text-[10px] font-semibold"
@@ -582,7 +582,7 @@ function App() {
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
           {tab === 'stocks' && <ErrorBoundary><StocksScreen stocks={stocks} setStocks={setStocks} crosses={crosses} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
           {tab === 'virgins' && <ErrorBoundary><VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} /></ErrorBoundary>}
-          {tab === 'exp' && <ErrorBoundary><ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} /></ErrorBoundary>}
+          {tab === 'exp' && <ErrorBoundary><ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} currentUser={currentUser} /></ErrorBoundary>}
           {tab === 'settings' && <ErrorBoundary><SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} setIsDemoMode={setIsDemoMode} /></ErrorBoundary>}
         </div>
       </main>

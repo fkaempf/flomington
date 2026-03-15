@@ -48,7 +48,6 @@ function VirginNotifSettings({ toast }) {
 /* ========== SETTINGS SCREEN ========== */
 function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser, demoMode, setIsDemoMode }) {
   const fileRef = useRef(null);
-  const [showRef, setShowRef] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [adminPinInput, setAdminPinInput] = useState('');
   const [confirmClearAll, setConfirmClearAll] = useState(false);
@@ -259,26 +258,6 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       </div>
       </>
       )}
-
-      <div className="card p-5">
-        <button onClick={() => setShowRef(!showRef)} className="flex items-center justify-between w-full touch">
-          <span className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>Quick Reference</span>
-          <span style={{ color: 'var(--text-3)' }}>{showRef ? '▴' : '▾'}</span>
-        </button>
-        {showRef && (
-          <div className="text-xs space-y-3 leading-relaxed mt-4" style={{ color: 'var(--text-3)' }}>
-            <p><b style={{ color: 'var(--text-2)' }}>25°C</b> - Virgins day 9–11, progeny day 11–15.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>18°C</b> - Virgins day 17–19, progeny day 19–23.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Stocks (25°C)</b> - Flip every 2-3 weeks.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Stocks (18°C)</b> - Flip every 6 weeks.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Re-vial</b> - Move parents to new vial after 2-4d for more offspring.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Optogenetics</b> - CsChrimson/ChR2 need 4+ days on all-trans retinal food.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>GCaMP</b> - Expression improves 3-5d post-eclosion.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Balancers</b> - FM7 (X), CyO (2nd), TM3/TM6B (3rd).</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Nomenclature</b> - Semicolons separate chromosomes. Lowercase = recessive, Uppercase = dominant.</p>
-          </div>
-        )}
-      </div>
 
       <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Change PIN</p>

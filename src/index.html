@@ -6210,22 +6210,44 @@ function App() {
     const now = Date.now();
     if (now - lastRePull.current < 10000) return; // throttle: max once per 10s
     lastRePull.current = now;
-    // Remote wins — Supabase is source of truth
+    // Remote wins only when remote actually changed
     supabasePullVirginBank(currentUser).then(remoteVB => {
-      setVirginBank(remoteVB);
+      setVirginBank(prev => {
+        const remoteKeys = new Set(Object.keys(remoteVB));
+        const localKeys = new Set(Object.keys(prev));
+        // Check if anything actually differs
+        if (remoteKeys.size === localKeys.size &&
+            [...remoteKeys].every(k => localKeys.has(k) && prev[k] === remoteVB[k])) return prev;
+        return remoteVB;
+      });
     });
     supabasePullExpBank(currentUser).then(remoteEB => {
-      setExpBank(remoteEB);
+      setExpBank(prev => {
+        const remoteKeys = new Set(Object.keys(remoteEB));
+        const localKeys = new Set(Object.keys(prev));
+        if (remoteKeys.size === localKeys.size &&
+            [...remoteKeys].every(k => localKeys.has(k) &&
+              prev[k]?.m === remoteEB[k]?.m && prev[k]?.f === remoteEB[k]?.f)) return prev;
+        return remoteEB;
+      });
     });
     supabasePullTransfers().then(remoteTransfers => {
       setTransfers(prev => {
         const localMap = new Map(prev.map(t => [t.id, t]));
-        // Start from remote, preserve local 'seen' state
-        const merged = remoteTransfers.map(rt => {
+        // Only update if remote set differs from local
+        const remoteIds = new Set(remoteTransfers.map(t => t.id));
+        const localIds = new Set(prev.map(t => t.id));
+        const changed = remoteIds.size !== localIds.size ||
+          [...remoteIds].some(id => !localIds.has(id)) ||
+          remoteTransfers.some(rt => {
+            const local = localMap.get(rt.id);
+            return local && local.status !== rt.status;
+          });
+        if (!changed) return prev;
+        return remoteTransfers.map(rt => {
           const local = localMap.get(rt.id);
           return local ? { ...rt, seen: local.seen } : rt;
         });
-        return merged;
       });
     });
   }, [sbConfigured, currentUser]);

@@ -536,11 +536,18 @@ async function supabaseSyncDeletes(table, localIds) {
   }
 }
 
-async function supabasePushVirginBank(userName, virginBank) {
+async function supabasePushVirginBank(userName, virginBank, lastPulledIds) {
   const sb = getSb();
   if (!sb) return;
+  // Pull remote to avoid re-creating deleted entries
+  const { data: remote } = await sb.from('virgin_banks').select('stock_id,count').eq('user_name', userName);
+  const remoteMap = new Map((remote || []).map(r => [r.stock_id, r.count]));
   const rows = Object.entries(virginBank)
-    .filter(([, count]) => count > 0)
+    .filter(([stockId, count]) => {
+      if (count <= 0) return false;
+      if (remoteMap.has(stockId)) return remoteMap.get(stockId) !== count; // update if changed
+      return !lastPulledIds.current.has(stockId); // new entry only if not previously pulled (i.e. not remotely deleted)
+    })
     .map(([stockId, count]) => ({
       user_name: userName, stock_id: stockId, count,
       updated_at: new Date().toISOString(),
@@ -549,14 +556,9 @@ async function supabasePushVirginBank(userName, virginBank) {
     const { error } = await sb.from('virgin_banks').upsert(rows, { onConflict: 'user_name,stock_id' });
     if (error) console.error('Virgin bank push failed:', error);
   }
-  const { data: remote } = await sb.from('virgin_banks').select('stock_id').eq('user_name', userName);
-  if (remote) {
-    const localIds = new Set(Object.keys(virginBank).filter(k => virginBank[k] > 0));
-    const toDelete = remote.filter(r => !localIds.has(r.stock_id)).map(r => r.stock_id);
-    if (toDelete.length > 0) {
-      await sb.from('virgin_banks').delete().eq('user_name', userName).in('stock_id', toDelete);
-    }
-  }
+  // Update lastPulledIds with everything now in remote
+  lastPulledIds.current = new Set((remote || []).map(r => r.stock_id));
+  rows.forEach(r => lastPulledIds.current.add(r.stock_id));
 }
 
 async function supabasePullVirginBank(userName) {
@@ -569,11 +571,20 @@ async function supabasePullVirginBank(userName) {
   return bank;
 }
 
-async function supabasePushExpBank(userName, expBank) {
+async function supabasePushExpBank(userName, expBank, lastPulledIds) {
   const sb = getSb();
   if (!sb) return;
+  // Pull remote to avoid re-creating deleted entries
+  const { data: remote } = await sb.from('exp_banks').select('source_id,male_count,female_count').eq('user_name', userName);
+  const remoteMap = new Map((remote || []).map(r => [r.source_id, { m: r.male_count || 0, f: r.female_count || 0 }]));
   const rows = Object.entries(expBank)
-    .filter(([, v]) => (v.m || 0) + (v.f || 0) > 0)
+    .filter(([sourceId, v]) => {
+      const lm = v.m || 0, lf = v.f || 0;
+      if (lm + lf <= 0) return false;
+      const rem = remoteMap.get(sourceId);
+      if (rem) return rem.m !== lm || rem.f !== lf; // update if changed
+      return !lastPulledIds.current.has(sourceId); // new entry only if not remotely deleted
+    })
     .map(([sourceId, v]) => ({
       user_name: userName, source_id: sourceId,
       source_type: v.source || 'cross',
@@ -584,14 +595,9 @@ async function supabasePushExpBank(userName, expBank) {
     const { error } = await sb.from('exp_banks').upsert(rows, { onConflict: 'user_name,source_id' });
     if (error) console.error('Exp bank push failed:', error);
   }
-  const { data: remote } = await sb.from('exp_banks').select('source_id').eq('user_name', userName);
-  if (remote) {
-    const localIds = new Set(Object.keys(expBank).filter(k => (expBank[k].m || 0) + (expBank[k].f || 0) > 0));
-    const toDelete = remote.filter(r => !localIds.has(r.source_id)).map(r => r.source_id);
-    if (toDelete.length > 0) {
-      await sb.from('exp_banks').delete().eq('user_name', userName).in('source_id', toDelete);
-    }
-  }
+  // Update lastPulledIds with everything now in remote
+  lastPulledIds.current = new Set((remote || []).map(r => r.source_id));
+  rows.forEach(r => lastPulledIds.current.add(r.source_id));
 }
 
 async function supabasePullExpBank(userName) {
@@ -6038,6 +6044,8 @@ function App() {
   useEffect(() => { if (localStorage.getItem('flo-bg') === '"none"') { setBgEffect('grainient'); } }, []);
   const [virginBank, setVirginBank] = useLS(`flo-virgins-${currentUser}`, {});
   const [expBank, setExpBank] = useLS(`flo-exp-${currentUser}`, {});
+  const lastPulledVBIds = useRef(new Set());
+  const lastPulledEBIds = useRef(new Set());
   const [virginsPerCross, setVirginsPerCross] = useLS('flo-vpc', 5);
   const [transfers, setTransfers] = useLS('flo-transfers', []);
   const [collections, setCollections] = useLS('flo-collections', DEFAULT_CATS);
@@ -6125,13 +6133,15 @@ function App() {
           setLocked(false);
         }
       }
-      // Pull virgin bank — local wins for existing entries
+      // Pull virgin bank — remote wins (Supabase is source of truth)
       supabasePullVirginBank(currentUser).then(remoteVB => {
-        setVirginBank(prev => ({ ...remoteVB, ...prev }));
+        lastPulledVBIds.current = new Set(Object.keys(remoteVB));
+        setVirginBank(remoteVB);
       });
-      // Pull exp bank — local wins for existing entries
+      // Pull exp bank — remote wins
       supabasePullExpBank(currentUser).then(remoteEB => {
-        setExpBank(prev => ({ ...remoteEB, ...prev }));
+        lastPulledEBIds.current = new Set(Object.keys(remoteEB));
+        setExpBank(remoteEB);
       });
       // Pull transfers — local wins for existing entries
       supabasePullTransfers().then(remoteTransfers => {
@@ -6212,8 +6222,8 @@ function App() {
         setSyncStatus('Push failed – retrying...');
         setTimeout(doPush, 5000);
       });
-      supabasePushVirginBank(currentUser, virginBank).catch(e => console.error('Virgin bank push error:', e));
-      supabasePushExpBank(currentUser, expBank).catch(e => console.error('Exp bank push error:', e));
+      supabasePushVirginBank(currentUser, virginBank, lastPulledVBIds).catch(e => console.error('Virgin bank push error:', e));
+      supabasePushExpBank(currentUser, expBank, lastPulledEBIds).catch(e => console.error('Exp bank push error:', e));
       supabasePushTransfers(transfers).catch(e => console.error('Transfers push error:', e));
     };
     pushNow.current = doPush;
@@ -6240,26 +6250,38 @@ function App() {
     pullInProgress.current = true;
     let pending = 3;
     const done = () => { if (--pending === 0) pullInProgress.current = false; };
-    // Local wins for existing entries, remote adds new ones; local deletes always win
+    // Remote wins, but preserve genuinely new local entries (not yet pushed)
     supabasePullVirginBank(currentUser).then(remoteVB => {
-      const filtered = { ...remoteVB };
-      Object.keys(filtered).forEach(k => { if (isDeletedAux('vb:' + k)) delete filtered[k]; });
+      const remoteIds = new Set(Object.keys(remoteVB));
       realtimeUpdateRef.current = true;
       setVirginBank(prev => {
-        const merged = { ...filtered, ...prev };
-        if (JSON.stringify(merged) === JSON.stringify(prev)) return prev;
-        return merged;
+        // Start with remote (respects remote deletions)
+        const result = { ...remoteVB };
+        // Keep local entries that are genuinely new (not in lastPulledIds = never existed in remote)
+        Object.entries(prev).forEach(([k, v]) => {
+          if (v > 0 && !remoteIds.has(k) && !lastPulledVBIds.current.has(k) && !isDeletedAux('vb:' + k)) {
+            result[k] = v;
+          }
+        });
+        lastPulledVBIds.current = new Set([...remoteIds, ...Object.keys(result)]);
+        if (JSON.stringify(result) === JSON.stringify(prev)) return prev;
+        return result;
       });
       done();
     });
     supabasePullExpBank(currentUser).then(remoteEB => {
-      const filtered = { ...remoteEB };
-      Object.keys(filtered).forEach(k => { if (isDeletedAux('eb:' + k)) delete filtered[k]; });
+      const remoteIds = new Set(Object.keys(remoteEB));
       realtimeUpdateRef.current = true;
       setExpBank(prev => {
-        const merged = { ...filtered, ...prev };
-        if (JSON.stringify(merged) === JSON.stringify(prev)) return prev;
-        return merged;
+        const result = { ...remoteEB };
+        Object.entries(prev).forEach(([k, v]) => {
+          if (((v.m || 0) + (v.f || 0)) > 0 && !remoteIds.has(k) && !lastPulledEBIds.current.has(k) && !isDeletedAux('eb:' + k)) {
+            result[k] = v;
+          }
+        });
+        lastPulledEBIds.current = new Set([...remoteIds, ...Object.keys(result)]);
+        if (JSON.stringify(result) === JSON.stringify(prev)) return prev;
+        return result;
       });
       done();
     });

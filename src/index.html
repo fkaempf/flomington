@@ -2653,7 +2653,7 @@ function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, 
 }
 
 /* ========== HOME SCREEN ========== */
-function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross, virginBank, setVirginBank, virginsPerCross, currentUser, transfers, onAcceptTransfer, onDeclineTransfer, onTransfer, STOCK_CATS, sentTransfers, onDismissTransfer, printListCrosses, setPrintListCrosses, initialCrossId, expBank, setExpBank }) {
+function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross, virginBank, setVirginBank, virginsPerCross, currentUser, transfers, onAcceptTransfer, onDeclineTransfer, onTransfer, STOCK_CATS, sentTransfers, onDismissTransfer, printListCrosses, setPrintListCrosses, printListVirgins, setPrintListVirgins, initialCrossId, expBank, setExpBank }) {
   const [showCompleted, setShowCompleted] = useState(false);
   const [flipCat, setFlipCat] = useState(null);
   const [flipDate, setFlipDate] = useState(today());
@@ -3171,6 +3171,11 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         <p className="text-xs font-bold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
                       </div>
                       <span className="text-[9px] shrink-0 ml-2" style={{ color: 'var(--text-3)' }}>{v.overnightAt18 ? '18°C' : '25°C'} · {v.collectionsPerDay}× · {doneCount}/{totalCollects}</span>
+                      <button onClick={(e) => { e.stopPropagation(); setPrintListVirgins(p => p.includes(s.id) ? p.filter(x => x !== s.id) : [...p, s.id]); toast.add(printListVirgins.includes(s.id) ? 'Removed virgin label' : 'Added virgin label'); }}
+                        className="p-1 rounded-md transition-all active:scale-90 cursor-pointer shrink-0 ml-1" title="Print virgin label"
+                        style={{ color: printListVirgins.includes(s.id) ? '#5eead4' : 'var(--text-3)', background: 'transparent' }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                      </button>
                     </div>
 
                     {/* Progress bar */}
@@ -3649,7 +3654,7 @@ function StocksScreen({ stocks, setStocks, toast, currentUser, onTransfer, STOCK
         </select>}
         <div className="flex-1" />
         {/* Print */}
-        {(() => { const totalPrint = printList.length + (printListCrosses || []).length; return (
+        {(() => { const totalPrint = printList.length + (printListCrosses || []).length + (printListVirgins || []).length + (printListExps || []).length; return (
         <button onClick={onOpenPrint} title={`Print labels${totalPrint > 0 ? ` (${totalPrint})` : ''}`}
           className="relative flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
           style={{ background: totalPrint > 0 ? 'rgba(0,128,128,0.12)' : 'var(--surface-2)', color: totalPrint > 0 ? '#5eead4' : 'var(--text-3)', border: totalPrint > 0 ? '1px solid rgba(0,128,128,0.2)' : '1px solid var(--border)' }}>
@@ -4624,7 +4629,7 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross 
 }
 
 /* ========== EXP SCREEN ========== */
-function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
+function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps, setPrintListExps }) {
   const [search, setSearch] = useState('');
   const [logMode, setLogMode] = useState('cross');
 
@@ -4683,6 +4688,11 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast }) {
                   <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{e.name}</p>
                   <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>{e.source === 'cross' ? '✕ cross' : '▪ stock'}</p>
                 </div>
+                <button onClick={() => { setPrintListExps(p => p.includes(e.id) ? p.filter(x => x !== e.id) : [...p, e.id]); toast.add(printListExps.includes(e.id) ? 'Removed exp label' : 'Added exp label'); }}
+                  className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" title="Print exp label"
+                  style={{ color: printListExps.includes(e.id) ? '#5eead4' : 'var(--text-3)', background: 'transparent' }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                </button>
                 <button onClick={() => clearEntry(e.id)} className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" style={{ color: 'var(--text-3)', background: 'transparent' }} title="Remove">✕</button>
               </div>
             ))}
@@ -5317,7 +5327,7 @@ function crossLabelText(c, stocks) {
   return { name, action, temp: '' };
 }
 
-function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCrosses, setPrintListCrosses, stocks, crosses, toast }) {
+function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCrosses, setPrintListCrosses, printListVirgins, setPrintListVirgins, printListExps, setPrintListExps, stocks, crosses, expBank, toast }) {
   const [format, setFormat] = useState('L7161');
   const [showGrid, setShowGrid] = useState(false);
   const [showQR, setShowQR] = useState(true);
@@ -5326,7 +5336,16 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
   if (!open) return null;
   const stockItems = printList.map(id => stocks.find(s => s.id === id)).filter(Boolean);
   const crossItems = (printListCrosses || []).map(id => (crosses || []).find(c => c.id === id)).filter(Boolean);
-  const totalCount = stockItems.length + crossItems.length;
+  const virginItems = (printListVirgins || []).map(id => stocks.find(s => s.id === id)).filter(Boolean);
+  const expItems = (printListExps || []).map(id => {
+    const entry = expBank?.[id];
+    if (!entry) return null;
+    const src = entry.source === 'cross' ? crosses.find(c => c.id === id) : stocks.find(s => s.id === id);
+    const name = entry.source === 'cross' ? (src ? `${stocks.find(s => s.id === src.parentA)?.name || '?'} x ${stocks.find(s => s.id === src.parentB)?.name || '?'}` : id) : (src?.name || id);
+    const genotype = entry.source === 'cross' ? '' : (src?.genotype || '');
+    return { id, name, genotype, source: entry.source };
+  }).filter(Boolean);
+  const totalCount = stockItems.length + crossItems.length + virginItems.length + expItems.length;
   const spec = LABEL_FORMATS[format];
 
   function doPrint() {
@@ -5346,6 +5365,12 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     crossItems.forEach(c => {
       const info = crossLabelText(c, stocks);
       allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: showQR ? qrBase + '?c=' + c.id.slice(0, 8) : null, isCross: true });
+    });
+    virginItems.forEach(s => {
+      allLabels.push({ id: 'v-' + s.id, name: esc(s.name), line2: esc(s.genotype || ''), line3: '\u24CB', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
+    });
+    expItems.forEach(e => {
+      allLabels.push({ id: 'e-' + e.id, name: esc(e.name), line2: esc(e.genotype), line3: '\u24BA', qrUrl: null });
     });
 
     const perPage = spec.cols * spec.rows;
@@ -5477,7 +5502,7 @@ setTimeout(function(){ window.print(); }, 500);
         {totalCount === 0 ? (
           <div className="text-center py-8">
             <p className="text-sm" style={{ color: 'var(--text-3)' }}>No labels queued</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>Tap the printer icon in stock or cross details to add them</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>Tap the printer icon in stock, cross, virgin, or exp entries to add them</p>
           </div>
         ) : (
           <div className="space-y-2 max-h-[40vh] overflow-y-auto mb-4">
@@ -5510,13 +5535,39 @@ setTimeout(function(){ window.print(); }, 500);
                 </div>
               );
             })}
+            {virginItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Virgins \u24CB</p>}
+            {virginItems.map(s => (
+              <div key={'v-'+s.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                  {s.genotype && <p className="text-xs mono truncate" style={{ color: 'var(--text-3)' }}>{s.genotype}</p>}
+                </div>
+                <button onClick={() => setPrintListVirgins(p => p.filter(x => x !== s.id))} className="touch shrink-0 p-1.5 rounded-lg transition-all active:scale-90"
+                  style={{ color: 'var(--text-3)' }} title="Remove">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg>
+                </button>
+              </div>
+            ))}
+            {expItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Experiments \u24BA</p>}
+            {expItems.map(e => (
+              <div key={'e-'+e.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-1)' }}>{e.name}</p>
+                  {e.genotype && <p className="text-xs mono truncate" style={{ color: 'var(--text-3)' }}>{e.genotype}</p>}
+                </div>
+                <button onClick={() => setPrintListExps(p => p.filter(x => x !== e.id))} className="touch shrink-0 p-1.5 rounded-lg transition-all active:scale-90"
+                  style={{ color: 'var(--text-3)' }} title="Remove">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg>
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
       <div className="flex gap-2">
         <Btn onClick={doPrint} disabled={totalCount === 0} className="flex-1">Print {totalCount > 0 ? `(${totalCount})` : ''}</Btn>
-        {totalCount > 0 && <Btn v="d" onClick={() => { setPrintList([]); setPrintListCrosses([]); toast.add('Print list cleared'); }}>Clear All</Btn>}
+        {totalCount > 0 && <Btn v="d" onClick={() => { setPrintList([]); setPrintListCrosses([]); setPrintListVirgins([]); setPrintListExps([]); toast.add('Print list cleared'); }}>Clear All</Btn>}
         <Btn v="s" onClick={onClose}>Close</Btn>
       </div>
     </Modal>
@@ -5757,6 +5808,8 @@ function App() {
   const STOCK_CATS = collections;
   const [printList, setPrintList] = useState([]);
   const [printListCrosses, setPrintListCrosses] = useState([]);
+  const [printListVirgins, setPrintListVirgins] = useState([]);
+  const [printListExps, setPrintListExps] = useState([]);
   const [printOpen, setPrintOpen] = useState(false);
   const [bulkBarActive, setBulkBarActive] = useState(false);
   const [sbUrl, setSbUrl] = useLS('flo-sb-url', '');
@@ -6049,10 +6102,10 @@ function App() {
             toast.add('Transfer declined');
           }} STOCK_CATS={STOCK_CATS} sentTransfers={sentResolved} onDismissTransfer={(t) => {
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
-          }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} />}
+          }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} />}
           {tab === 'stocks' && <StocksScreen stocks={stocks} setStocks={setStocks} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} />}
           {tab === 'virgins' && <VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} />}
-          {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} />}
+          {tab === 'exp' && <ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} />}
           {tab === 'settings' && <SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} />}
         </div>
       </main>
@@ -6158,7 +6211,7 @@ function App() {
       </nav>
 
       <NewCrossWizard open={newCrossOpen} onClose={() => { setNewCrossOpen(false); setVirginCrossStock(null); }} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} preselectedVirgin={virginCrossStock} virginsPerCross={virginsPerCross} currentUser={currentUser} />
-      <PrintLabelsModal open={printOpen} onClose={() => setPrintOpen(false)} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} stocks={stocks} crosses={crosses} toast={toast} />
+      <PrintLabelsModal open={printOpen} onClose={() => setPrintOpen(false)} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} printListExps={printListExps} setPrintListExps={setPrintListExps} stocks={stocks} crosses={crosses} expBank={expBank} toast={toast} />
       <Modal open={!!crossAccessDenied} onClose={() => setCrossAccessDenied(null)} title="Access Denied">
         <p className="text-sm mb-4" style={{ color: 'var(--text-2)' }}>The cross "{crossAccessDenied}" belongs to another user. Switch to the correct account to view it.</p>
         <Btn v="s" onClick={() => setCrossAccessDenied(null)} className="w-full">Close</Btn>

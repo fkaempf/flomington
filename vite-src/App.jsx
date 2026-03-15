@@ -151,10 +151,7 @@ const IconSettings = (active) => (
 
 function App() {
   const [currentUser, setCurrentUser] = useLS('flo-user', 'Flo');
-  const [locked, setLocked] = useState(() => {
-    if (!localStorage.getItem(`flo-pin-${currentUser}`)) return true;
-    return false;
-  });
+  const [locked, setLocked] = useState(true);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   useEffect(() => {
     const on = () => setIsOnline(true);
@@ -237,8 +234,8 @@ function App() {
             pinSynced = true;
           }
         });
-        if (pinSynced && localStorage.getItem(`flo-pin-${currentUser}`)) {
-          setLocked(false);
+        if (pinSynced) {
+          setPinVersion(v => v + 1);
         }
       }
       // Pull virgin bank and merge with local

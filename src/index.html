@@ -697,8 +697,9 @@ const VCS_DEFAULTS = {
 function vcsKey(o18, n) { return (o18 ? '18' : '25') + '_' + n; }
 function getVirginWindowH(o18) { return o18 ? 16 : 8; }
 function makeVcs(o18, cpd, sched) {
+  const now = new Date().toISOString();
   return { enabled: true, overnightAt18: !!o18, collectionsPerDay: cpd, schedule: { ...sched },
-    lastClearTime: null, lastClearTemp: o18 ? '18' : '25', virginDeadline: null, todayActions: [], createdAt: new Date().toISOString() };
+    lastClearTime: now, lastClearTemp: o18 ? '18' : '25', virginDeadline: computeDeadline(now, !!o18), todayActions: [], createdAt: now };
 }
 
 // Parse "HH:MM" to minutes since midnight

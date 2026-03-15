@@ -661,6 +661,11 @@ const _editedIds = new Set();
 function markEdited(id) { _editedIds.add(id); setTimeout(() => _editedIds.delete(id), 10000); }
 function isEditedLocally(id) { return _editedIds.has(id); }
 
+// Track locally deleted auxiliary entries (virgin bank, exp bank) so pulls/realtime don't re-add them
+const _deletedAux = new Set();
+function markDeletedAux(key) { _deletedAux.add(key); setTimeout(() => _deletedAux.delete(key), 15000); }
+function isDeletedAux(key) { return _deletedAux.has(key); }
+
 // Immediately delete from Supabase (don't wait for debounced push)
 function supabaseDeleteNow(table, id) {
   const sb = getSb();
@@ -716,6 +721,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank
       .on('postgres_changes', { event: '*', schema: 'public', table: 'virgin_banks' }, payload => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const row = payload.new;
+          if (isDeletedAux('vb:' + row.stock_id)) return; // local delete wins
           if (setVirginBank) setVirginBank(prev => {
             if (row.count > 0) return { ...prev, [row.stock_id]: row.count };
             const next = { ...prev }; delete next[row.stock_id]; return next;
@@ -727,6 +733,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exp_banks' }, payload => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const row = payload.new;
+          if (isDeletedAux('eb:' + row.source_id)) return; // local delete wins
           if (setExpBank) setExpBank(prev => {
             if ((row.male_count || 0) + (row.female_count || 0) > 0) {
               return { ...prev, [row.source_id]: { m: row.male_count || 0, f: row.female_count || 0, source: row.source_type || 'cross' } };
@@ -4760,6 +4767,7 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross,
   }
 
   function clearStock(stockId) {
+    markDeletedAux('vb:' + stockId);
     setVirginBank(prev => { const next = { ...prev }; delete next[stockId]; return next; });
     const sb = getSb();
     if (sb) sb.from('virgin_banks').delete().eq('user_name', currentUser).eq('stock_id', stockId).then(() => {});
@@ -4870,6 +4878,7 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps,
   }
 
   function clearEntry(sourceId) {
+    markDeletedAux('eb:' + sourceId);
     setExpBank(prev => { const next = { ...prev }; delete next[sourceId]; return next; });
     const sb = getSb();
     if (sb) sb.from('exp_banks').delete().eq('user_name', currentUser).eq('source_id', sourceId).then(() => {});
@@ -6210,25 +6219,29 @@ function App() {
     const now = Date.now();
     if (now - lastRePull.current < 10000) return; // throttle: max once per 10s
     lastRePull.current = now;
-    // Remote wins only when remote actually changed
+    // Remote wins only when remote actually changed, but local deletes always win
     supabasePullVirginBank(currentUser).then(remoteVB => {
+      // Filter out locally deleted entries
+      const filtered = { ...remoteVB };
+      Object.keys(filtered).forEach(k => { if (isDeletedAux('vb:' + k)) delete filtered[k]; });
       setVirginBank(prev => {
-        const remoteKeys = new Set(Object.keys(remoteVB));
+        const remoteKeys = new Set(Object.keys(filtered));
         const localKeys = new Set(Object.keys(prev));
-        // Check if anything actually differs
         if (remoteKeys.size === localKeys.size &&
-            [...remoteKeys].every(k => localKeys.has(k) && prev[k] === remoteVB[k])) return prev;
-        return remoteVB;
+            [...remoteKeys].every(k => localKeys.has(k) && prev[k] === filtered[k])) return prev;
+        return filtered;
       });
     });
     supabasePullExpBank(currentUser).then(remoteEB => {
+      const filtered = { ...remoteEB };
+      Object.keys(filtered).forEach(k => { if (isDeletedAux('eb:' + k)) delete filtered[k]; });
       setExpBank(prev => {
-        const remoteKeys = new Set(Object.keys(remoteEB));
+        const remoteKeys = new Set(Object.keys(filtered));
         const localKeys = new Set(Object.keys(prev));
         if (remoteKeys.size === localKeys.size &&
             [...remoteKeys].every(k => localKeys.has(k) &&
-              prev[k]?.m === remoteEB[k]?.m && prev[k]?.f === remoteEB[k]?.f)) return prev;
-        return remoteEB;
+              prev[k]?.m === filtered[k]?.m && prev[k]?.f === filtered[k]?.f)) return prev;
+        return filtered;
       });
     });
     supabasePullTransfers().then(remoteTransfers => {

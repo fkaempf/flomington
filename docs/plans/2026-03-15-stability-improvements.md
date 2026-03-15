@@ -688,32 +688,184 @@ Phase 7: Task 16 (Supabase + security) - after Phase 1
 Phase 8: Task 17 (docs) - last
 ```
 
-Recommended execution order: 1 → 2 → 3 → 4 → 5 → 11 → 12 → 13 → 6 → 7 → 8 → 14 → 15 → 9 → 16 → 17
+Recommended execution order:
+1 → 2 → 3 → 4 → 5 → 11 → 12 → 13 → 6 → 7 → 8 → 14 → 15 → 9 → 16 → 18 → 19 → 20 → 17
 
-Data safety (11) and bug fixes (12, 13) before refactoring (6) and polish (14, 15).
+Data safety (11) and bug fixes (12, 13) first. Then dedup (6) and robustness (7-9).
+Mobile + security (14-16) next. Architecture (18-20) last since they're refactoring.
+Docs (17) always last.
+
+---
+
+---
+
+## Phase 9: Architecture Improvements (Tasks 18-20) — from reference reading
+
+> These tasks apply patterns from [Bulletproof React](https://github.com/alan2207/bulletproof-react), [LaunchDarkly React 2025](https://launchdarkly.com/docs/blog/react-architecture-2025), [Strapi state management guide](https://strapi.io/blog/react-and-nextjs-in-2025-modern-best-practices), and [Supabase best practices](https://www.leanware.co/insights/supabase-best-practices). All applicable WITHOUT a build system.
+
+### Task 18: Add React Context to Kill Prop Drilling
+
+**Context:** HomeScreen takes 22+ props, StocksScreen 19, PrintLabelsModal 14. All from `App()` which is ~450 lines of state + prop threading. Two contexts eliminate this without new dependencies.
+
+- [ ] **Step 1: Create DataContext (server-synced state)**
+
+Define above App(), move all useLS state + Supabase sync logic into DataProvider:
+
+```jsx
+const DataCtx = React.createContext();
+
+function DataProvider({ children }) {
+  const [currentUser, setCurrentUser] = useLS('flo-user', 'Flo');
+  const [stocks, setStocks] = useLS('flo-stocks', []);
+  const [crosses, setCrosses] = useLS('flo-crosses', []);
+  const [virginBank, setVirginBank] = useLS(`flo-virgins-${currentUser}`, {});
+  const [expBank, setExpBank] = useLS(`flo-exp-${currentUser}`, {});
+  const [transfers, setTransfers] = useLS('flo-transfers', []);
+  const [collections, setCollections] = useLS('flo-collections', ['No Collection']);
+  // ... all Supabase sync effects move here ...
+
+  const value = useMemo(() => ({
+    stocks, setStocks, crosses, setCrosses, virginBank, setVirginBank,
+    expBank, setExpBank, transfers, setTransfers, collections, setCollections,
+    currentUser, setCurrentUser, syncStatus,
+  }), [stocks, crosses, virginBank, expBank, transfers, collections, currentUser, syncStatus]);
+
+  return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
+}
+
+function useData() { return React.useContext(DataCtx); }
+```
+
+- [ ] **Step 2: Create UIContext (ephemeral state)**
+
+```jsx
+const UICtx = React.createContext();
+// Holds: tab, printLists, printOpen, bulkBarActive, toast, bgEffect
+function useUI() { return React.useContext(UICtx); }
+```
+
+- [ ] **Step 3: Wrap App render in both providers**
+
+```jsx
+function App() {
+  return (
+    <DataProvider>
+      <UIProvider>
+        <AppShell />
+      </UIProvider>
+    </DataProvider>
+  );
+}
+```
+
+- [ ] **Step 4: Migrate HomeScreen to useData()** — drops from 22+ props to ~1 (`initialCrossId`)
+- [ ] **Step 5: Migrate StocksScreen to useData()** — drops from 19 props to ~1 (`initialStockId`)
+- [ ] **Step 6: Migrate remaining screens** (VirginsScreen, ExpScreen, SettingsScreen, PrintLabelsModal)
+- [ ] **Step 7: Commit**
+
+```bash
+git commit -m "refactor: add DataContext + UIContext, eliminate prop drilling"
+```
+
+**Result:** App() drops from ~450 lines to ~80. Screen component signatures drop from 20+ props to 0-3.
+
+---
+
+### Task 19: Extract Custom Hooks from App
+
+**Context:** App currently has ~120 lines of pure state+effect logic (sync, deep links, notifications, print lists) mixed with rendering. Extract into composable hooks.
+
+- [ ] **Step 1: Extract `useSupabaseSync()`** — pull/push/realtime effects (~lines 5868-5972)
+- [ ] **Step 2: Extract `useDeepLinks()`** — URL param parsing (~lines 5978-6013)
+- [ ] **Step 3: Extract `useVcsNotifications()`** — notification effects (~lines 6016-6090)
+- [ ] **Step 4: Handle realtime status callbacks**
+
+```js
+.subscribe((status, err) => {
+  if (status === 'CHANNEL_ERROR') setSyncStatus('Realtime error');
+  if (status === 'TIMED_OUT') setSyncStatus('Connection timed out');
+})
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor: extract useSupabaseSync, useDeepLinks, useVcsNotifications hooks"
+```
+
+---
+
+### Task 20: Break HomeScreen into Section Components + Add DB Indexes
+
+**Context:** HomeScreen is ~830 lines. Break into focused sections. Also add database indexes per 42 Coffee Cups best practices.
+
+- [ ] **Step 1: Extract `HomeFlipSchedule`** — the flip schedule section
+- [ ] **Step 2: Extract `HomeVcsDashboard`** — VCS cards section (now uses shared VcsCard from Task 6)
+- [ ] **Step 3: Extract `HomeActiveCrosses`** — active crosses list
+- [ ] **Step 4: Extract `HomeTransferBanner`** — transfer notifications
+- [ ] **Step 5: Add database indexes**
+
+```sql
+CREATE INDEX idx_crosses_parent_a ON crosses(parent_a);
+CREATE INDEX idx_crosses_parent_b ON crosses(parent_b);
+CREATE INDEX idx_crosses_owner ON crosses(owner);
+CREATE INDEX idx_crosses_status ON crosses(status);
+CREATE INDEX idx_virgin_banks_user ON virgin_banks(user_name);
+CREATE INDEX idx_exp_banks_user ON exp_banks(user_name);
+CREATE INDEX idx_transfers_to ON transfers(to_user);
+CREATE INDEX idx_transfers_status ON transfers(status);
+```
+
+- [ ] **Step 6: Version-control the schema**
+
+```bash
+brew install supabase/tap/supabase
+supabase link --project-ref rawkyzzqyvizrglanyzi
+supabase db pull
+git add supabase/
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git commit -m "refactor: break HomeScreen into sections, add DB indexes, pull schema"
+```
 
 ---
 
 ## Architecture Reference Links
 
-For future refactoring beyond this plan (when approaching ~7K+ lines or adding build step):
+> Insights from these resources are now incorporated into Tasks 18-20 above.
 
-**React Architecture:**
-- [Bulletproof React](https://github.com/alan2207/bulletproof-react) — feature-based folder structure (features/stocks, features/crosses, features/vcs each with own API/components/hooks)
-- [React folder structure evolution](https://www.robinwieruch.de/react-folder-structure/) — 5-step progression from flat to feature-based
-- [React architecture 2025](https://launchdarkly.com/docs/blog/react-architecture-2025) — "lift content up, push state down"
-- [Strapi React best practices](https://strapi.io/blog/react-and-nextjs-in-2025-modern-best-practices) — state management decision tree (useState for small, Zustand for complex, TanStack Query for server state)
+**React Architecture (read by agents):**
+- [Bulletproof React](https://github.com/alan2207/bulletproof-react) — feature-based structure, unidirectional flow, no nested render functions
+- [Robin Wieruch folder structure](https://www.robinwieruch.de/react-folder-structure/) — co-location principle, progressive scaling
+- [LaunchDarkly React 2025](https://launchdarkly.com/docs/blog/react-architecture-2025) — container/presenter split, state machines for workflows, custom hooks as abstraction boundary
+- [Strapi React best practices](https://strapi.io/blog/react-and-nextjs-in-2025-modern-best-practices) — state management decision tree: useState for small apps, Context for cross-cutting, Zustand only if complex shared state needed
 
-**Supabase:**
-- [Database overview](https://supabase.com/docs/guides/database/overview) — tables, extensions, importing
-- [React quickstart](https://supabase.com/docs/guides/getting-started/quickstarts/reactjs) — connecting React to Supabase
-- [Migrations & schemas](https://supabase.com/docs/guides/local-development/declarative-database-schemas) — managing schema changes with CLI
-- [Shared responsibility model](https://supabase.com/docs/guides/deployment/shared-responsibility-model) — what's on you vs Supabase
-- [Leanware best practices](https://www.leanware.co/insights/supabase-best-practices) — RLS (keep simple), never expose service_role
-- [Cursor Rules Supabase guide](https://cursorrules.org/article/supabase-cursor-mdc-file) — multi-environment, avoid direct prod changes
+**Key decisions from reading:**
+- **DO use Context API** — zero new dependencies, kills prop drilling, proportional to project size
+- **DON'T use Zustand/Redux/TanStack Query** — requires build step or CDN overhead, overkill for 7-user lab tool
+- **DON'T use useReducer** — state is wide (many independent arrays), not complex (deeply nested)
+- **DO extract custom hooks** — useSupabaseSync, useDeepLinks, useVcsNotifications
+- **DO break mega-components** — HomeScreen (830 lines) into 4-5 sections of ~150 lines each
+
+**Supabase (read by agents):**
+- [Supabase shared responsibility model](https://supabase.com/docs/guides/deployment/shared-responsibility-model) — RLS is YOUR responsibility, backups on Free tier are daily only
+- [Leanware best practices](https://www.leanware.co/insights/supabase-best-practices) — single channel for multiple table listeners, batch upserts, exponential backoff
+- [Supabase migrations](https://supabase.com/docs/guides/local-development/declarative-database-schemas) — `supabase db pull` to version-control schema
+
+**Key decisions from reading:**
+- **Enable RLS with permissive policies** — `USING (true)` is fine for 7 trusted users, but RLS must be ON
+- **App already uses single realtime channel** (line 577: `sb.channel('db-changes')`) — good
+- **Add `updated_at` columns** for future last-write-wins conflict resolution
+- **Run `supabase db pull`** to version-control the schema in git
+- **Handle realtime status callbacks** (CHANNEL_ERROR, TIMED_OUT) — surface to user
 
 **Database Design:**
-- [42 Coffee Cups best practices](https://www.42coffeecups.com/blog/database-design-best-practices) — normalization, indexing, naming conventions
+- [42 Coffee Cups best practices](https://www.42coffeecups.com/blog/database-design-best-practices) — index foreign keys, 3NF target, strategic denormalization only after profiling
+- **VCS as JSONB in stocks is fine** — nested config read/written as unit, no need to normalize
+- **collected[] and vials[] as JSON in crosses is fine** — same reasoning, always read/written together
 
 ## Risk Notes
 

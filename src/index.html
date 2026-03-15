@@ -781,6 +781,9 @@ function computeNextActions(vcs, now) {
     });
   }
 
+  // Sort by chronological time
+  result.sort((a, b) => a.suggestedMs - b.suggestedMs);
+
   // Auto-advance: if the first action is >2h overdue and there's a later action, skip it
   while (result.length > 1 && result[0].timeUntilMs < -2 * 3600000) {
     result[0].skipped = true;

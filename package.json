@@ -2,9 +2,24 @@
   "name": "flomington",
   "private": true,
   "scripts": {
-    "encrypt": "staticrypt src/index.html -d . --short --remember 30 --template-title 'Flomington' --template-instructions 'Enter the lab password to access the fly stock manager.' --template-color-primary '#8b5cf6' --template-color-secondary '#09090b'"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "encrypt:old": "staticrypt src/index.html -d . --short --remember 30 --template-title 'Flomington' --template-instructions 'Enter the lab password to access the fly stock manager.' --template-color-primary '#8b5cf6' --template-color-secondary '#09090b'",
+    "encrypt": "staticrypt dist/index.html -d dist --short --remember 30 --template-title 'Flomington' --template-instructions 'Enter the lab password to access the fly stock manager.' --template-color-primary '#8b5cf6' --template-color-secondary '#09090b'",
+    "deploy": "vite build && npm run encrypt"
   },
   "devDependencies": {
     "staticrypt": "^3.0.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.99.1",
+    "@tailwindcss/vite": "^4.2.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "qrcode-generator": "^2.0.4",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwindcss": "^4.2.1",
+    "vite": "^6.4.1"
   }
 }

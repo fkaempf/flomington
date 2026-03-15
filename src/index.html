@@ -6234,6 +6234,61 @@ function App() {
     return () => { window.removeEventListener('beforeunload', flush); document.removeEventListener('visibilitychange', onVisChange); };
   }, []);
 
+  // Re-pull auxiliary data when page becomes visible (handles mobile sleep, lost websocket)
+  const lastRePull = useRef(0);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.hidden || !sbConfigured || demoMode.current) return;
+      const now = Date.now();
+      if (now - lastRePull.current < 10000) return; // throttle: max once per 10s
+      lastRePull.current = now;
+      supabasePullVirginBank(currentUser).then(remoteVB => {
+        setVirginBank(prev => {
+          const merged = { ...remoteVB };
+          Object.entries(prev).forEach(([k, v]) => {
+            if (v > 0) merged[k] = Math.max(merged[k] || 0, v);
+          });
+          return merged;
+        });
+      });
+      supabasePullExpBank(currentUser).then(remoteEB => {
+        setExpBank(prev => {
+          const merged = {};
+          Object.entries(remoteEB).forEach(([k, v]) => { merged[k] = v; });
+          Object.entries(prev).forEach(([k, v]) => {
+            if ((v.m || 0) + (v.f || 0) > 0) {
+              merged[k] = {
+                m: Math.max((merged[k]?.m || 0), v.m || 0),
+                f: Math.max((merged[k]?.f || 0), v.f || 0),
+                source: v.source || merged[k]?.source || 'cross',
+              };
+            } else {
+              delete merged[k];
+            }
+          });
+          return merged;
+        });
+      });
+      supabasePullTransfers().then(remoteTransfers => {
+        setTransfers(prev => {
+          const localMap = new Map(prev.map(t => [t.id, t]));
+          const merged = [...prev];
+          remoteTransfers.forEach(rt => {
+            const local = localMap.get(rt.id);
+            if (!local) merged.push(rt);
+            else if (local.status === 'pending' && rt.status !== 'pending') {
+              const idx = merged.findIndex(t => t.id === rt.id);
+              if (idx >= 0) merged[idx] = { ...rt, seen: local.seen };
+            }
+          });
+          return merged;
+        });
+      });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [sbConfigured, currentUser]);
+
   // Real-time subscriptions for cross-device sync
   useSupabaseRealtime(
     (updater) => { realtimeUpdateRef.current = true; setStocks(updater); },

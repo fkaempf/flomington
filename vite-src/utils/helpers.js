@@ -1,7 +1,10 @@
 /* ========== HELPERS ========== */
 
-import { addDays } from './dates.js';
+import { addDays, isTouchDevice as _isTouchDevice } from './dates.js';
 import { STATUSES, OPTO, CALC, BALANCER_MARKERS } from './constants.js';
+
+// Re-export from dates for convenience
+export const isTouchDevice = _isTouchDevice;
 
 export const uid = () => crypto.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36);
 

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Modal, Btn, Inp, Confirm, CircleProgress } from '../components/ui';
+import { Modal, Btn, Inp, Confirm, CircleProgress, Field } from '../components/ui';
 import { STATUSES, STATUS_SHORT, VCS_DEFAULTS, USERS } from '../utils/constants.js';
 import { today, fmt, fmtFull, dFromNow, normDate } from '../utils/dates.js';
 import { fmtTime, fmtDur } from '../utils/dates.js';
 import { uid, sn, sg, cl, clFull, tempLabel, tempFull, nextSt, stIdx, stockTags, crossDetect, getFlipDays, getTL, calcTL, getScreeningGuide, isTouchDevice, dlICS } from '../utils/helpers.js';
 import { markEdited, markDeleted, supabaseDeleteNow } from '../utils/supabase.js';
-import { computeNextActions, getVcsStatus, vcsWindowProgress, makeVcs, vcsKey } from '../utils/vcs.js';
+import { computeNextActions, getVcsStatus, vcsWindowProgress, makeVcs, vcsKey, computeDeadline } from '../utils/vcs.js';
 import CrossCard from '../components/CrossCard.jsx';
 import StockModal from '../components/StockModal.jsx';
 

@@ -243,6 +243,7 @@ export function mergeCrosses(local, remote) {
 // Track locally deleted IDs so realtime doesn't re-add them
 const _deletedIds = new Set();
 export function markDeleted(id) { _deletedIds.add(id); setTimeout(() => _deletedIds.delete(id), 15000); }
+export function unmarkDeleted(id) { _deletedIds.delete(id); }
 export function isDeletedLocally(id) { return _deletedIds.has(id); }
 
 // Track locally edited IDs so realtime doesn't overwrite pending changes

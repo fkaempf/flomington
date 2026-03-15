@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Modal, Btn, Inp, Txt, Field, Confirm, TagBadges } from '../components/ui';
 import { TEMPS, USERS } from '../utils/constants.js';
 import { today, fmt, dFromNow } from '../utils/dates.js';
-import { uid, sn, tempLabel, tempFull, stockTags, getFlipDays, guessSource, isTouchDevice } from '../utils/helpers.js';
-import { markEdited, markDeleted, supabaseDeleteNow } from '../utils/supabase.js';
+import { uid, tempFull, stockTags, getFlipDays, guessSource, isTouchDevice } from '../utils/helpers.js';
+import { markEdited, markDeleted, unmarkDeleted, supabaseDeleteNow } from '../utils/supabase.js';
 import useLS from '../hooks/useLS.js';
 import StockModal from '../components/StockModal.jsx';
 
@@ -71,7 +71,7 @@ function StocksScreen({ stocks, setStocks, crosses, toast, currentUser, onTransf
     supabaseDeleteNow('stocks', deleting);
     setStocks(p => p.filter(x => x.id !== deleting));
     setDeleting(null);
-    if (s) toast.add(`Deleted "${s.name}"`, () => { _deletedIds.delete(s.id); setStocks(p => [...p, s]); });
+    if (s) toast.add(`Deleted "${s.name}"`, () => { unmarkDeleted(s.id); setStocks(p => [...p, s]); });
   }
 
   // Multi-select
@@ -111,7 +111,7 @@ function StocksScreen({ stocks, setStocks, crosses, toast, currentUser, onTransf
     const removed = stocks.filter(s => ids.has(s.id));
     ids.forEach(id => { markDeleted(id); supabaseDeleteNow('stocks', id); });
     setStocks(p => p.filter(s => !ids.has(s.id)));
-    toast.add(`Deleted ${ids.size} stock${ids.size > 1 ? 's' : ''}`, () => { removed.forEach(s => _deletedIds.delete(s.id)); setStocks(p => [...p, ...removed]); });
+    toast.add(`Deleted ${ids.size} stock${ids.size > 1 ? 's' : ''}`, () => { removed.forEach(s => unmarkDeleted(s.id)); setStocks(p => [...p, ...removed]); });
     setBulkDeleting(false);
     exitSelect();
   }

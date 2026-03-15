@@ -4,7 +4,7 @@ import { STATUSES, STATUS_SHORT, VCS_DEFAULTS, USERS } from '../utils/constants.
 import { today, fmt, dFromNow } from '../utils/dates.js';
 import { fmtTime } from '../utils/dates.js';
 import { uid, sn, sg, cl, nextSt, stIdx, tempLabel, crossDetect, getScreeningGuide, getTL, isTouchDevice, dlICS } from '../utils/helpers.js';
-import { markEdited, markDeleted, supabaseDeleteNow } from '../utils/supabase.js';
+import { markEdited, markDeleted, unmarkDeleted, supabaseDeleteNow } from '../utils/supabase.js';
 import { computeNextActions, makeVcs, vcsKey } from '../utils/vcs.js';
 import EditCrossModal from './EditCrossModal.jsx';
 
@@ -193,7 +193,7 @@ function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank
     setCrosses(p => p.filter(c => c.id !== cross.id));
     setDeleting(false);
     setDetailOpen(false);
-    toast.add('Cross deleted', () => { _deletedIds.delete(backup.id); setCrosses(p => [...p, backup]); });
+    toast.add('Cross deleted', () => { unmarkDeleted(backup.id); setCrosses(p => [...p, backup]); });
   }
 
   function setStatus(st) {

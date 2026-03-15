@@ -947,7 +947,8 @@ function getVcsStatus(vcs, now) {
   if (!actions.length) return 'green';
   const next = actions[0];
   if (next.isPastDeadline) return 'red';
-  if (next.isOverdue) return 'red';
+  if (next.isInGracePeriod) return 'red';
+  if (next.isOverdue) return 'yellow';
   if (next.timeUntilMs < 30 * 60000) return 'yellow';
   return 'green';
 }

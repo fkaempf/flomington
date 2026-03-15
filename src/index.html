@@ -435,7 +435,7 @@ const CROSS_FIELD_MAP = {
 function toSnake(obj, fieldMap) {
   const out = {};
   for (const [camel, snake] of Object.entries(fieldMap)) {
-    if (obj[camel] !== undefined && obj[camel] !== null) out[snake] = obj[camel];
+    if (obj[camel] !== undefined) out[snake] = obj[camel];
   }
   return out;
 }
@@ -534,6 +534,39 @@ async function supabaseSyncDeletes(table, localIds) {
   }
 }
 
+async function supabasePushVirginBank(userName, virginBank) {
+  const sb = getSb();
+  if (!sb) return;
+  const rows = Object.entries(virginBank)
+    .filter(([, count]) => count > 0)
+    .map(([stockId, count]) => ({
+      user_name: userName, stock_id: stockId, count,
+      updated_at: new Date().toISOString(),
+    }));
+  if (rows.length > 0) {
+    const { error } = await sb.from('virgin_banks').upsert(rows, { onConflict: 'user_name,stock_id' });
+    if (error) console.error('Virgin bank push failed:', error);
+  }
+  const { data: remote } = await sb.from('virgin_banks').select('stock_id').eq('user_name', userName);
+  if (remote) {
+    const localIds = new Set(Object.keys(virginBank).filter(k => virginBank[k] > 0));
+    const toDelete = remote.filter(r => !localIds.has(r.stock_id)).map(r => r.stock_id);
+    if (toDelete.length > 0) {
+      await sb.from('virgin_banks').delete().eq('user_name', userName).in('stock_id', toDelete);
+    }
+  }
+}
+
+async function supabasePullVirginBank(userName) {
+  const sb = getSb();
+  if (!sb) return {};
+  const { data, error } = await sb.from('virgin_banks').select('*').eq('user_name', userName);
+  if (error || !data) return {};
+  const bank = {};
+  data.forEach(row => { if (row.count > 0) bank[row.stock_id] = row.count; });
+  return bank;
+}
+
 function mergeStocks(local, remote) {
   const merged = [...local];
   const localIds = new Set(local.map(s => s.id));
@@ -569,7 +602,7 @@ function supabaseDeleteNow(table, id) {
   sb.from(table).delete().eq('id', id).then(() => {});
 }
 
-function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
+function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank) {
   const subRef = React.useRef(null);
   React.useEffect(() => {
     const sb = getSb();
@@ -612,6 +645,17 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion) {
             localStorage.setItem('flo-pin-' + p.user_name, p.hash);
             setPinVersion(v => v + 1);
           }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'virgin_banks' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const row = payload.new;
+          if (setVirginBank) setVirginBank(prev => {
+            if (row.count > 0) return { ...prev, [row.stock_id]: row.count };
+            const next = { ...prev }; delete next[row.stock_id]; return next;
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.stock_id) {
+          if (setVirginBank) setVirginBank(prev => { const next = { ...prev }; delete next[payload.old.stock_id]; return next; });
         }
       })
       .subscribe();
@@ -5895,6 +5939,16 @@ function App() {
           setLocked(false);
         }
       }
+      // Pull virgin bank and merge with local
+      supabasePullVirginBank(currentUser).then(remoteVB => {
+        setVirginBank(prev => {
+          const merged = { ...remoteVB };
+          Object.entries(prev).forEach(([k, v]) => {
+            if (v > 0) merged[k] = Math.max(merged[k] || 0, v);
+          });
+          return merged;
+        });
+      });
       setSyncStatus('Synced ' + new Date().toLocaleTimeString());
       setTimeout(() => {
         initialPushBlocked.current = false;
@@ -5951,10 +6005,11 @@ function App() {
         setSyncStatus('Push failed – retrying...');
         setTimeout(doPush, 5000);
       });
+      supabasePushVirginBank(currentUser, virginBank).catch(e => console.error('Virgin bank push error:', e));
     };
     pushNow.current = doPush;
     syncTimer.current = setTimeout(doPush, 3000);
-  }, [stocks, crosses, sbConfigured, pinVersion]);
+  }, [stocks, crosses, sbConfigured, pinVersion, virginBank]);
 
   // Flush pending push on page close/hide
   useEffect(() => {
@@ -5968,7 +6023,8 @@ function App() {
   useSupabaseRealtime(
     (updater) => { realtimeUpdateRef.current = true; setStocks(updater); },
     (updater) => { realtimeUpdateRef.current = true; setCrosses(updater); },
-    setPinVersion
+    setPinVersion,
+    (updater) => { realtimeUpdateRef.current = true; setVirginBank(updater); }
   );
 
   const [newCrossOpen, setNewCrossOpen] = useState(false);

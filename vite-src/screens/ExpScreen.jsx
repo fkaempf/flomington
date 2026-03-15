@@ -1,8 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Inp } from '../components/ui';
-import { getSb } from '../utils/supabase.js';
 
-function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps, setPrintListExps, currentUser }) {
+function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps, setPrintListExps, deleteExpEntry }) {
   const [search, setSearch] = useState('');
   const [logMode, setLogMode] = useState('cross');
 
@@ -33,9 +32,7 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps,
   }
 
   function clearEntry(sourceId) {
-    setExpBank(prev => { const next = { ...prev }; delete next[sourceId]; return next; });
-    const sb = getSb();
-    if (sb) sb.from('exp_banks').delete().eq('user_name', currentUser).eq('source_id', sourceId).then(() => {});
+    deleteExpEntry(sourceId);
     toast.add('Cleared');
   }
 

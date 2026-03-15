@@ -31,7 +31,7 @@ import VirginsScreen from './screens/VirginsScreen.jsx';
 import ExpScreen from './screens/ExpScreen.jsx';
 import SettingsScreen from './screens/SettingsScreen.jsx';
 
-function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank, setExpBank, setTransfers) {
+function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank, setExpBank, setTransfers, deletedExpIdsRef) {
   const subRef = React.useRef(null);
   React.useEffect(() => {
     const sb = getSb();
@@ -90,6 +90,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exp_banks' }, payload => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const row = payload.new;
+          if (deletedExpIdsRef?.current?.has(row.source_id)) return;
           if (setExpBank) setExpBank(prev => {
             if ((row.male_count || 0) + (row.female_count || 0) > 0) {
               return { ...prev, [row.source_id]: { m: row.male_count || 0, f: row.female_count || 0, source: row.source_type || 'cross' } };
@@ -202,6 +203,7 @@ function App() {
   const [syncStatus, setSyncStatus] = useState('');
   const syncTimer = useRef(null);
   const realtimeUpdateRef = useRef(false);
+  const deletedExpIds = useRef(new Set());
 
   const [pinVersion, setPinVersion] = useState(0);
   const initialPushBlocked = useRef(true);
@@ -375,8 +377,17 @@ function App() {
     setPinVersion,
     (updater) => { realtimeUpdateRef.current = true; setVirginBank(updater); },
     (updater) => { realtimeUpdateRef.current = true; setExpBank(updater); },
-    (updater) => { realtimeUpdateRef.current = true; setTransfers(updater); }
+    (updater) => { realtimeUpdateRef.current = true; setTransfers(updater); },
+    deletedExpIds
   );
+
+  function deleteExpEntry(sourceId) {
+    deletedExpIds.current.add(sourceId);
+    setTimeout(() => deletedExpIds.current.delete(sourceId), 15000);
+    setExpBank(prev => { const next = { ...prev }; delete next[sourceId]; return next; });
+    const sb = getSb();
+    if (sb) sb.from('exp_banks').delete().eq('user_name', currentUser).eq('source_id', sourceId);
+  }
 
   const [newCrossOpen, setNewCrossOpen] = useState(false);
   const [virginCrossStock, setVirginCrossStock] = useState(null);
@@ -582,7 +593,7 @@ function App() {
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
           {tab === 'stocks' && <ErrorBoundary><StocksScreen stocks={stocks} setStocks={setStocks} crosses={crosses} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
           {tab === 'virgins' && <ErrorBoundary><VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} /></ErrorBoundary>}
-          {tab === 'exp' && <ErrorBoundary><ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} currentUser={currentUser} /></ErrorBoundary>}
+          {tab === 'exp' && <ErrorBoundary><ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} deleteExpEntry={deleteExpEntry} /></ErrorBoundary>}
           {tab === 'settings' && <ErrorBoundary><SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} setIsDemoMode={setIsDemoMode} /></ErrorBoundary>}
         </div>
       </main>

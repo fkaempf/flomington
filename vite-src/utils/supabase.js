@@ -161,6 +161,15 @@ export async function supabasePullVirginBank(userName) {
 export async function supabasePushExpBank(userName, expBank) {
   const sb = getSb();
   if (!sb) return;
+  const localIds = new Set(Object.keys(expBank).filter(k => (expBank[k].m || 0) + (expBank[k].f || 0) > 0));
+  // Delete orphaned entries FIRST so realtime echo from upsert won't re-add them
+  const { data: remote } = await sb.from('exp_banks').select('source_id').eq('user_name', userName);
+  if (remote) {
+    const toDelete = remote.filter(r => !localIds.has(r.source_id)).map(r => r.source_id);
+    if (toDelete.length > 0) {
+      await sb.from('exp_banks').delete().eq('user_name', userName).in('source_id', toDelete);
+    }
+  }
   const rows = Object.entries(expBank)
     .filter(([, v]) => (v.m || 0) + (v.f || 0) > 0)
     .map(([sourceId, v]) => ({
@@ -172,14 +181,6 @@ export async function supabasePushExpBank(userName, expBank) {
   if (rows.length > 0) {
     const { error } = await sb.from('exp_banks').upsert(rows, { onConflict: 'user_name,source_id' });
     if (error) console.error('Exp bank push failed:', error);
-  }
-  const { data: remote } = await sb.from('exp_banks').select('source_id').eq('user_name', userName);
-  if (remote) {
-    const localIds = new Set(Object.keys(expBank).filter(k => (expBank[k].m || 0) + (expBank[k].f || 0) > 0));
-    const toDelete = remote.filter(r => !localIds.has(r.source_id)).map(r => r.source_id);
-    if (toDelete.length > 0) {
-      await sb.from('exp_banks').delete().eq('user_name', userName).in('source_id', toDelete);
-    }
   }
 }
 

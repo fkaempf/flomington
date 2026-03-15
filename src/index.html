@@ -6100,7 +6100,20 @@ function App() {
               if (idx >= 0) merged[idx] = { ...rt, seen: local.seen };
             }
           });
-          return merged;
+          // Auto-cleanup: remove resolved+seen transfers older than 7 days
+          const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+          const staleIds = [];
+          const cleaned = merged.filter(t => {
+            const isStale = t.status !== 'pending' && t.seen && new Date(t.createdAt).getTime() < sevenDaysAgo;
+            if (isStale) staleIds.push(t.id);
+            return !isStale;
+          });
+          // Delete stale transfers from Supabase
+          if (staleIds.length > 0) {
+            const sb = getSb();
+            if (sb) sb.from('transfers').delete().in('id', staleIds).then(() => {});
+          }
+          return cleaned;
         });
       });
       setSyncStatus('Synced ' + new Date().toLocaleTimeString());

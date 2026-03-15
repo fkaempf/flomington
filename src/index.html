@@ -6099,61 +6099,30 @@ function App() {
           setLocked(false);
         }
       }
-      // Pull virgin bank and merge with local
+      // Pull virgin bank — remote wins (Supabase is source of truth)
       supabasePullVirginBank(currentUser).then(remoteVB => {
-        setVirginBank(prev => {
-          const merged = { ...remoteVB };
-          Object.entries(prev).forEach(([k, v]) => {
-            if (v > 0) merged[k] = Math.max(merged[k] || 0, v);
-          });
-          return merged;
-        });
+        setVirginBank(remoteVB);
       });
-      // Pull exp bank and merge with local
+      // Pull exp bank — remote wins
       supabasePullExpBank(currentUser).then(remoteEB => {
-        setExpBank(prev => {
-          const merged = {};
-          // Start with remote entries
-          Object.entries(remoteEB).forEach(([k, v]) => { merged[k] = v; });
-          // Local entries override remote (local wins)
-          Object.entries(prev).forEach(([k, v]) => {
-            if ((v.m || 0) + (v.f || 0) > 0) {
-              merged[k] = {
-                m: Math.max((merged[k]?.m || 0), v.m || 0),
-                f: Math.max((merged[k]?.f || 0), v.f || 0),
-                source: v.source || merged[k]?.source || 'cross',
-              };
-            } else {
-              delete merged[k]; // locally cleared = remove
-            }
-          });
-          return merged;
-        });
+        setExpBank(remoteEB);
       });
-      // Pull transfers and merge with local (local wins for status)
+      // Pull transfers — remote wins, preserve local 'seen' state
       supabasePullTransfers().then(remoteTransfers => {
         setTransfers(prev => {
           const localMap = new Map(prev.map(t => [t.id, t]));
-          const merged = [...prev];
-          remoteTransfers.forEach(rt => {
+          const transfers = remoteTransfers.map(rt => {
             const local = localMap.get(rt.id);
-            if (!local) {
-              merged.push(rt);
-            } else if (local.status === 'pending' && rt.status !== 'pending') {
-              // Remote has been resolved but local hasn't - take remote
-              const idx = merged.findIndex(t => t.id === rt.id);
-              if (idx >= 0) merged[idx] = { ...rt, seen: local.seen };
-            }
+            return local ? { ...rt, seen: local.seen } : rt;
           });
           // Auto-cleanup: remove resolved+seen transfers older than 7 days
           const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
           const staleIds = [];
-          const cleaned = merged.filter(t => {
+          const cleaned = transfers.filter(t => {
             const isStale = t.status !== 'pending' && t.seen && new Date(t.createdAt).getTime() < sevenDaysAgo;
             if (isStale) staleIds.push(t.id);
             return !isStale;
           });
-          // Delete stale transfers from Supabase
           if (staleIds.length > 0) {
             const sb = getSb();
             if (sb) sb.from('transfers').delete().in('id', staleIds).then(() => {});
@@ -6237,48 +6206,24 @@ function App() {
   // Re-pull auxiliary data (virgin bank, exp bank, transfers) from Supabase
   const lastRePull = useRef(0);
   const rePullAux = useCallback(() => {
-    if (!sbConfigured || demoMode.current) return;
+    if (!sbConfigured || demoMode.current || pendingPush.current) return;
     const now = Date.now();
     if (now - lastRePull.current < 10000) return; // throttle: max once per 10s
     lastRePull.current = now;
+    // Remote wins — Supabase is source of truth
     supabasePullVirginBank(currentUser).then(remoteVB => {
-      setVirginBank(prev => {
-        const merged = { ...remoteVB };
-        Object.entries(prev).forEach(([k, v]) => {
-          if (v > 0) merged[k] = Math.max(merged[k] || 0, v);
-        });
-        return merged;
-      });
+      setVirginBank(remoteVB);
     });
     supabasePullExpBank(currentUser).then(remoteEB => {
-      setExpBank(prev => {
-        const merged = {};
-        Object.entries(remoteEB).forEach(([k, v]) => { merged[k] = v; });
-        Object.entries(prev).forEach(([k, v]) => {
-          if ((v.m || 0) + (v.f || 0) > 0) {
-            merged[k] = {
-              m: Math.max((merged[k]?.m || 0), v.m || 0),
-              f: Math.max((merged[k]?.f || 0), v.f || 0),
-              source: v.source || merged[k]?.source || 'cross',
-            };
-          } else {
-            delete merged[k];
-          }
-        });
-        return merged;
-      });
+      setExpBank(remoteEB);
     });
     supabasePullTransfers().then(remoteTransfers => {
       setTransfers(prev => {
         const localMap = new Map(prev.map(t => [t.id, t]));
-        const merged = [...prev];
-        remoteTransfers.forEach(rt => {
+        // Start from remote, preserve local 'seen' state
+        const merged = remoteTransfers.map(rt => {
           const local = localMap.get(rt.id);
-          if (!local) merged.push(rt);
-          else if (local.status === 'pending' && rt.status !== 'pending') {
-            const idx = merged.findIndex(t => t.id === rt.id);
-            if (idx >= 0) merged[idx] = { ...rt, seen: local.seen };
-          }
+          return local ? { ...rt, seen: local.seen } : rt;
         });
         return merged;
       });

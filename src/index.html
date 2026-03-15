@@ -814,10 +814,16 @@ function vcsWindowProgress(vcs, now) {
   if (!vcs?.lastClearTime) return 0;
   now = now || new Date();
   const clearMs = new Date(vcs.lastClearTime).getTime();
-  const cycleAt18 = vcs.lastClearTemp ? vcs.lastClearTemp === '18' : vcs.overnightAt18;
-  const windowMs = getVirginWindowH(cycleAt18) * 3600000;
-  const elapsed = now.getTime() - clearMs;
-  return Math.max(0, Math.min(1, elapsed / windowMs));
+  const nowMs = now.getTime();
+  // Progress tracks toward next scheduled action, not the expiry deadline
+  const actions = computeNextActions(vcs, now);
+  if (actions.length > 0) {
+    const nextMs = actions[0].suggestedMs;
+    if (nextMs > clearMs) return Math.max(0, Math.min(1, (nowMs - clearMs) / (nextMs - clearMs)));
+  }
+  // Fallback: track toward 8h expiry if no actions left
+  const windowMs = getVirginWindowH() * 3600000;
+  return Math.max(0, Math.min(1, (nowMs - clearMs) / windowMs));
 }
 
 // Format time as "HH:MM" with date context
@@ -3033,14 +3039,14 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                             </div>
                             <div className="flex justify-between mt-0.5">
                               <span className="text-[9px]" style={{ color: 'var(--text-3)' }}>Cleared {fmtTime(v.lastClearTime)}</span>
-                              <span className="text-[9px]" style={{ color: progress > 0.9 ? '#ef4444' : 'var(--text-3)' }}>Deadline {deadline ? fmtTime(deadline) : '--'}</span>
+                              <span className="text-[9px]" style={{ color: progress > 0.9 ? '#ef4444' : 'var(--text-3)' }}>{next ? 'Next ' + fmtTime(next.suggestedTime) : (deadline ? 'Expires ' + fmtTime(deadline) : '--')}</span>
                             </div>
                           </div>
                         )}
 
                         {/* Status message */}
                         {isPastDeadline ? (
-                          <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#ef4444' }}>Deadline PASSED - clear & discard</p>
+                          <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#ef4444' }}>Expired - clear & discard</p>
                         ) : isInGracePeriod ? (
                           <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#eab308' }}>LATE - collect now or discard</p>
                         ) : next && next.timeUntilMs > 2 * 3600000 ? (
@@ -3208,14 +3214,14 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         </div>
                         <div className="flex justify-between mt-0.5">
                           <span className="text-[9px]" style={{ color: 'var(--text-3)' }}>Cleared {fmtTime(v.lastClearTime)}</span>
-                          <span className="text-[9px]" style={{ color: progress > 0.9 ? '#ef4444' : 'var(--text-3)' }}>Deadline {deadline ? fmtTime(deadline) : '--'}</span>
+                          <span className="text-[9px]" style={{ color: progress > 0.9 ? '#ef4444' : 'var(--text-3)' }}>{next ? 'Next ' + fmtTime(next.suggestedTime) : (deadline ? 'Expires ' + fmtTime(deadline) : '--')}</span>
                         </div>
                       </div>
                     )}
 
                     {/* Status message */}
                     {isPastDeadline ? (
-                      <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#ef4444' }}>Deadline PASSED - clear & discard</p>
+                      <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#ef4444' }}>Expired - clear & discard</p>
                     ) : isInGracePeriod ? (
                       <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#eab308' }}>LATE - collect now or discard</p>
                     ) : next && next.timeUntilMs > 2 * 3600000 ? (

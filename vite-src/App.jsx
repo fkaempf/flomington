@@ -1,0 +1,6163 @@
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+
+/* ========== HELPERS ========== */
+const uid = () => crypto.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36);
+const today = () => new Date().toISOString().slice(0, 10);
+const normDate = d => { if (!d) return ''; if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d; const p = new Date(d); return isNaN(p) ? '' : p.toISOString().slice(0, 10); };
+const toDate = d => new Date(normDate(d) + 'T12:00:00');
+const addDays = (d, n) => { const x = toDate(d); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+const fmt = d => { if (!d) return '-'; return toDate(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
+const fmtFull = d => { if (!d) return '-'; return toDate(d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); };
+const isPast = d => normDate(d) < today();
+const isToday = d => normDate(d) === today();
+const dFromNow = d => { if (!d) return 0; const ms = toDate(d) - toDate(today()); return isNaN(ms) ? 0 : Math.round(ms / 864e5); };
+
+const isTouchDevice = () => window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
+
+/* ========== SUPABASE SYNC ========== */
+
+const STOCK_FIELD_MAP = {
+  id: 'id', name: 'name', genotype: 'genotype', variant: 'variant',
+  category: 'category', location: 'location', source: 'source',
+  sourceId: 'source_id', flybaseId: 'flybase_id', janeliaLine: 'janelia_line',
+  maintainer: 'maintainer', notes: 'notes', isGift: 'is_gift',
+  giftFrom: 'gift_from', createdAt: 'created_at', lastFlipped: 'last_flipped',
+  copies: 'copies', vcs: 'vcs',
+};
+
+const CROSS_FIELD_MAP = {
+  id: 'id', parentA: 'parent_a', parentB: 'parent_b', temperature: 'temperature',
+  setupDate: 'setup_date', status: 'status', owner: 'owner', notes: 'notes',
+  targetCount: 'target_count', collected: 'collected', vials: 'vials',
+  virginsCollected: 'virgins_collected', manualFlipDate: 'manual_flip_date',
+  manualEcloseDate: 'manual_eclose_date', manualVirginDate: 'manual_virgin_date',
+  crossType: 'cross_type', parentCrossId: 'parent_cross_id',
+  experimentType: 'experiment_type', experimentDate: 'experiment_date',
+  retinalStartDate: 'retinal_start_date', waitStartDate: 'wait_start_date',
+  ripeningStartDate: 'ripening_start_date',
+};
+
+function toSnake(obj, fieldMap) {
+  const out = {};
+  for (const [camel, snake] of Object.entries(fieldMap)) {
+    if (obj[camel] !== undefined) out[snake] = obj[camel];
+  }
+  return out;
+}
+
+function toCamel(obj, fieldMap) {
+  const reverseMap = {};
+  for (const [camel, snake] of Object.entries(fieldMap)) reverseMap[snake] = camel;
+  const out = {};
+  for (const [key, val] of Object.entries(obj)) {
+    const camelKey = reverseMap[key] || key;
+    out[camelKey] = val;
+  }
+  return out;
+}
+
+// Supabase config - hardcoded defaults, localStorage can override
+const SUPABASE_URL = 'https://rawkyzzqyvizrglanyzi.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_yfVKfIlgBL9OsTW3uDgx8A_zBkjFyys';
+
+let _sb = null;
+function getSb() {
+  if (_sb) return _sb;
+  const rawUrl = localStorage.getItem('flo-sb-url');
+  const rawKey = localStorage.getItem('flo-sb-key');
+  const url = (rawUrl ? rawUrl.replace(/^"|"$/g, '') : '') || SUPABASE_URL;
+  const key = (rawKey ? rawKey.replace(/^"|"$/g, '') : '') || SUPABASE_KEY;
+  if (!url || !key) return null;
+  try {
+    _sb = createClient(url, key);
+    return _sb;
+  } catch (e) {
+    console.error('Supabase init failed:', e);
+    return null;
+  }
+}
+function resetSb() { _sb = null; }
+
+async function supabasePull() {
+  const sb = getSb();
+  if (!sb) throw new Error('Supabase not configured');
+  const [stocksRes, crossesRes, pinsRes] = await Promise.all([
+    sb.from('stocks').select('*'),
+    sb.from('crosses').select('*'),
+    sb.from('pins').select('*'),
+  ]);
+  if (stocksRes.error) throw stocksRes.error;
+  if (crossesRes.error) throw crossesRes.error;
+  if (pinsRes.error) throw pinsRes.error;
+  const stocks = (stocksRes.data || []).map(row => {
+    const s = toCamel(row, STOCK_FIELD_MAP);
+    if (s.isGift === false) delete s.isGift;
+    if (typeof s.vcs === 'string') try { s.vcs = JSON.parse(s.vcs); } catch { s.vcs = null; }
+    return s;
+  });
+  const crosses = (crossesRes.data || []).map(row => {
+    const c = toCamel(row, CROSS_FIELD_MAP);
+    if (!c.collected) c.collected = [];
+    if (!c.vials) c.vials = [];
+    if (c.targetCount) c.targetCount = parseInt(c.targetCount) || 0;
+    if (c.virginsCollected) c.virginsCollected = parseInt(c.virginsCollected) || 0;
+    return c;
+  });
+  const pins = (pinsRes.data || []).map(row => ({ user: row.user_name, hash: row.hash }));
+  return { stocks, crosses, pins };
+}
+
+async function supabasePush(stocks, crosses, pins) {
+  const sb = getSb();
+  if (!sb) throw new Error('Supabase not configured');
+  if (stocks && stocks.length > 0) {
+    const rows = stocks.map(s => toSnake(s, STOCK_FIELD_MAP));
+    const { error } = await sb.from('stocks').upsert(rows, { onConflict: 'id' });
+    if (error) throw error;
+  }
+  if (crosses && crosses.length > 0) {
+    const rows = crosses.map(c => toSnake(c, CROSS_FIELD_MAP));
+    const { error } = await sb.from('crosses').upsert(rows, { onConflict: 'id' });
+    if (error) throw error;
+  }
+  if (pins && pins.length > 0) {
+    const rows = pins.map(p => ({ user_name: p.user, hash: p.hash }));
+    const { error } = await sb.from('pins').upsert(rows, { onConflict: 'user_name' });
+    if (error) throw error;
+  }
+  return { stockCount: stocks?.length || 0, crossCount: crosses?.length || 0 };
+}
+
+async function supabaseSyncDeletes(table, localIds) {
+  const sb = getSb();
+  if (!sb) return;
+  const { data } = await sb.from(table).select('id');
+  if (!data) return;
+  const remoteOnly = data.filter(r => !localIds.has(r.id)).map(r => r.id);
+  if (remoteOnly.length > 0) {
+    await sb.from(table).delete().in('id', remoteOnly);
+  }
+}
+
+async function supabasePushVirginBank(userName, virginBank) {
+  const sb = getSb();
+  if (!sb) return;
+  const rows = Object.entries(virginBank)
+    .filter(([, count]) => count > 0)
+    .map(([stockId, count]) => ({
+      user_name: userName, stock_id: stockId, count,
+      updated_at: new Date().toISOString(),
+    }));
+  if (rows.length > 0) {
+    const { error } = await sb.from('virgin_banks').upsert(rows, { onConflict: 'user_name,stock_id' });
+    if (error) console.error('Virgin bank push failed:', error);
+  }
+  const { data: remote } = await sb.from('virgin_banks').select('stock_id').eq('user_name', userName);
+  if (remote) {
+    const localIds = new Set(Object.keys(virginBank).filter(k => virginBank[k] > 0));
+    const toDelete = remote.filter(r => !localIds.has(r.stock_id)).map(r => r.stock_id);
+    if (toDelete.length > 0) {
+      await sb.from('virgin_banks').delete().eq('user_name', userName).in('stock_id', toDelete);
+    }
+  }
+}
+
+async function supabasePullVirginBank(userName) {
+  const sb = getSb();
+  if (!sb) return {};
+  const { data, error } = await sb.from('virgin_banks').select('*').eq('user_name', userName);
+  if (error || !data) return {};
+  const bank = {};
+  data.forEach(row => { if (row.count > 0) bank[row.stock_id] = row.count; });
+  return bank;
+}
+
+async function supabasePushExpBank(userName, expBank) {
+  const sb = getSb();
+  if (!sb) return;
+  const rows = Object.entries(expBank)
+    .filter(([, v]) => (v.m || 0) + (v.f || 0) > 0)
+    .map(([sourceId, v]) => ({
+      user_name: userName, source_id: sourceId,
+      source_type: v.source || 'cross',
+      male_count: v.m || 0, female_count: v.f || 0,
+      updated_at: new Date().toISOString(),
+    }));
+  if (rows.length > 0) {
+    const { error } = await sb.from('exp_banks').upsert(rows, { onConflict: 'user_name,source_id' });
+    if (error) console.error('Exp bank push failed:', error);
+  }
+  const { data: remote } = await sb.from('exp_banks').select('source_id').eq('user_name', userName);
+  if (remote) {
+    const localIds = new Set(Object.keys(expBank).filter(k => (expBank[k].m || 0) + (expBank[k].f || 0) > 0));
+    const toDelete = remote.filter(r => !localIds.has(r.source_id)).map(r => r.source_id);
+    if (toDelete.length > 0) {
+      await sb.from('exp_banks').delete().eq('user_name', userName).in('source_id', toDelete);
+    }
+  }
+}
+
+async function supabasePullExpBank(userName) {
+  const sb = getSb();
+  if (!sb) return {};
+  const { data, error } = await sb.from('exp_banks').select('*').eq('user_name', userName);
+  if (error || !data) return {};
+  const bank = {};
+  data.forEach(row => {
+    bank[row.source_id] = { m: row.male_count || 0, f: row.female_count || 0, source: row.source_type || 'cross' };
+  });
+  return bank;
+}
+
+async function supabasePushTransfers(transfers) {
+  const sb = getSb();
+  if (!sb || !transfers?.length) return;
+  const rows = transfers.map(t => ({
+    id: t.id, from_user: t.from, to_user: t.to,
+    transfer_type: t.type, item_id: t.itemId || null,
+    collection_name: t.collection || null,
+    display_name: t.name, status: t.status || 'pending',
+    seen: t.seen || false, created_at: t.createdAt || new Date().toISOString(),
+  }));
+  const { error } = await sb.from('transfers').upsert(rows, { onConflict: 'id' });
+  if (error) console.error('Transfers push failed:', error);
+}
+
+async function supabasePullTransfers() {
+  const sb = getSb();
+  if (!sb) return [];
+  const { data, error } = await sb.from('transfers').select('*');
+  if (error || !data) return [];
+  return data.map(row => ({
+    id: row.id, from: row.from_user, to: row.to_user,
+    type: row.transfer_type, itemId: row.item_id,
+    collection: row.collection_name, name: row.display_name,
+    status: row.status, seen: row.seen || false, createdAt: row.created_at,
+  }));
+}
+
+function mergeStocks(local, remote) {
+  const merged = [...local];
+  const localIds = new Set(local.map(s => s.id));
+  remote.forEach(rs => {
+    if (!localIds.has(rs.id)) merged.push(rs);
+  });
+  return merged;
+}
+
+function mergeCrosses(local, remote) {
+  const merged = [...local];
+  const localIds = new Set(local.map(c => c.id));
+  remote.forEach(rc => {
+    if (!localIds.has(rc.id)) merged.push(rc);
+  });
+  return merged;
+}
+
+// Track locally deleted IDs so realtime doesn't re-add them
+const _deletedIds = new Set();
+function markDeleted(id) { _deletedIds.add(id); setTimeout(() => _deletedIds.delete(id), 15000); }
+function isDeletedLocally(id) { return _deletedIds.has(id); }
+
+// Track locally edited IDs so realtime doesn't overwrite pending changes
+const _editedIds = new Set();
+function markEdited(id) { _editedIds.add(id); setTimeout(() => _editedIds.delete(id), 10000); }
+function isEditedLocally(id) { return _editedIds.has(id); }
+
+// Immediately delete from Supabase (don't wait for debounced push)
+function supabaseDeleteNow(table, id) {
+  const sb = getSb();
+  if (!sb) return;
+  sb.from(table).delete().eq('id', id).then(() => {});
+}
+
+function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank, setExpBank, setTransfers) {
+  const subRef = React.useRef(null);
+  React.useEffect(() => {
+    const sb = getSb();
+    if (!sb) return;
+    const channel = sb.channel('db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stocks' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          if (isDeletedLocally(payload.new.id) || isEditedLocally(payload.new.id)) return;
+          const item = toCamel(payload.new, STOCK_FIELD_MAP);
+          if (item.isGift === false) delete item.isGift;
+          if (typeof item.vcs === 'string') try { item.vcs = JSON.parse(item.vcs); } catch { item.vcs = null; }
+          setStocks(prev => {
+            const idx = prev.findIndex(s => s.id === item.id);
+            if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...item }; return next; }
+            return [...prev, item];
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.id) {
+          setStocks(prev => prev.filter(s => s.id !== payload.old.id));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'crosses' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          if (isDeletedLocally(payload.new.id) || isEditedLocally(payload.new.id)) return;
+          const item = toCamel(payload.new, CROSS_FIELD_MAP);
+          if (!item.collected) item.collected = [];
+          if (!item.vials) item.vials = [];
+          setCrosses(prev => {
+            const idx = prev.findIndex(c => c.id === item.id);
+            if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...item }; return next; }
+            return [...prev, item];
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.id) {
+          setCrosses(prev => prev.filter(c => c.id !== payload.old.id));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pins' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const p = payload.new;
+          if (p.user_name && p.hash) {
+            localStorage.setItem('flo-pin-' + p.user_name, p.hash);
+            setPinVersion(v => v + 1);
+          }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'virgin_banks' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const row = payload.new;
+          if (setVirginBank) setVirginBank(prev => {
+            if (row.count > 0) return { ...prev, [row.stock_id]: row.count };
+            const next = { ...prev }; delete next[row.stock_id]; return next;
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.stock_id) {
+          if (setVirginBank) setVirginBank(prev => { const next = { ...prev }; delete next[payload.old.stock_id]; return next; });
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exp_banks' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const row = payload.new;
+          if (setExpBank) setExpBank(prev => {
+            if ((row.male_count || 0) + (row.female_count || 0) > 0) {
+              return { ...prev, [row.source_id]: { m: row.male_count || 0, f: row.female_count || 0, source: row.source_type || 'cross' } };
+            }
+            const next = { ...prev }; delete next[row.source_id]; return next;
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.source_id) {
+          if (setExpBank) setExpBank(prev => { const next = { ...prev }; delete next[payload.old.source_id]; return next; });
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transfers' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const row = payload.new;
+          const item = {
+            id: row.id, from: row.from_user, to: row.to_user,
+            type: row.transfer_type, itemId: row.item_id,
+            collection: row.collection_name, name: row.display_name,
+            status: row.status, seen: row.seen || false, createdAt: row.created_at,
+          };
+          if (setTransfers) setTransfers(prev => {
+            const idx = prev.findIndex(t => t.id === item.id);
+            if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...item }; return next; }
+            return [...prev, item];
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.id) {
+          if (setTransfers) setTransfers(prev => prev.filter(t => t.id !== payload.old.id));
+        }
+      })
+      .subscribe();
+    subRef.current = channel;
+    return () => {
+      if (subRef.current) { sb.removeChannel(subRef.current); subRef.current = null; }
+    };
+  }, []);
+}
+
+const is18 = t => t === '18';
+const tempLabel = t => ({ '25inc': '25°C Inc', '25room': '25°C Room', '18': '18°C', 'RT': 'RT', '25': '25°C' }[t] || t);
+const tempFull = t => ({ '25inc': '25°C Incubator', '25room': '25°C Room', '18': '18°C Room', 'RT': 'Room Temp' }[t] || t);
+
+const TEMPS = ['25inc', '25room', '18', 'RT'];
+const DEFAULT_CATS = ['No Collection'];
+const USERS = ['Flo', 'Bella', 'Seba', 'Catherine', 'Tomke', 'Shahar', 'Myrto'];
+const STOCK_SOURCES = ['Bloomington', 'VDRC', 'Kyoto', 'Other'];
+function guessSource(name) {
+  if (!name) return null;
+  const n = name.trim();
+  const m = n.match(/^(BDSC|BL|Bloomington|VDRC|Kyoto|DGRC)\s*[#:]?\s*(\d+)/i);
+  if (!m) return null;
+  const prefix = m[1].toLowerCase();
+  const id = m[2];
+  if (['bdsc', 'bl', 'bloomington'].includes(prefix)) return { source: 'Bloomington', sourceId: id };
+  if (prefix === 'vdrc') return { source: 'VDRC', sourceId: id };
+  if (['kyoto', 'dgrc'].includes(prefix)) return { source: 'Kyoto', sourceId: id };
+  return null;
+}
+function stockUrl(source, stockId) {
+  if (!source || !stockId) return null;
+  const id = stockId.replace(/\D/g, '');
+  if (source === 'Bloomington') return `https://bdsc.indiana.edu/stocks/${id}`;
+  if (source === 'VDRC') return `https://stockcenter.vdrc.at/control/product/~VIEW_INDEX=0/~VIEW_SIZE=100/~product_id=${id}`;
+  if (source === 'Kyoto') return `https://kyotofly.kit.jp/cgi-bin/stocks/search_res_det.cgi?DB_NUM=1&DG_NUM=${id}`;
+  return null;
+}
+function parseJaneliaLine(text) {
+  if (!text) return null;
+  const m = text.match(/\b(SS|MB|JRC_SS|JRC_MB)\s*(\d{4,6})\b/i);
+  if (m) return m[1].replace('JRC_', '').toUpperCase() + m[2];
+  return null;
+}
+function janeliaUrl(lineId) {
+  if (!lineId) return null;
+  return `https://splitgal4.janelia.org/cgi-bin/view_splitgal4_imagery.cgi?line=${lineId}`;
+}
+async function fetchBDSCInfo(stockNum) {
+  const id = String(stockNum).replace(/\D/g, '');
+  if (!id) return null;
+  try {
+    const resp = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(`https://bdsc.indiana.edu/stocks/${id}`)}`);
+    if (!resp.ok) return null;
+    const html = await resp.text();
+    const janelia = parseJaneliaLine(html);
+    const genoMatch = html.match(/Genotype[^<]*<[^>]*>([^<]+)/i);
+    return { janeliaLine: janelia, genotype: genoMatch ? genoMatch[1].trim() : null };
+  } catch { return null; }
+}
+function parseFlyBase(input) {
+  if (!input) return null;
+  const trimmed = input.trim();
+  const urlMatch = trimmed.match(/flybase\.org\/reports\/(FB\w+)/i);
+  if (urlMatch) return urlMatch[1];
+  if (/^FB\w+$/i.test(trimmed)) return trimmed;
+  return trimmed;
+}
+function flybaseUrl(fbId) {
+  if (!fbId) return null;
+  const id = parseFlyBase(fbId);
+  return id ? `https://flybase.org/reports/${id}` : null;
+}
+const STOCK_VARIANTS = ['stock', 'expanded'];
+
+/* ========== VCS (Virgin Collection Stock) ========== */
+const VCS_DEFAULTS = {
+  '18_2': { eveningClear: '17:30', morningCollect: '09:30', middayCollect: null, afternoonCollect: '17:00' },
+  '18_3': { eveningClear: '17:30', morningCollect: '09:30', middayCollect: '14:00', afternoonCollect: '17:00' },
+  '25_2': { eveningClear: '18:00', morningCollect: '09:00', middayCollect: null, afternoonCollect: '14:30' },
+  '25_3': { eveningClear: '18:00', morningCollect: '09:00', middayCollect: '12:00', afternoonCollect: '16:30' },
+};
+function vcsKey(o18, n) { return (o18 ? '18' : '25') + '_' + n; }
+function getVirginWindowH() { return 8; }
+function makeVcs(o18, cpd, sched) {
+  const now = new Date().toISOString();
+  return { enabled: true, overnightAt18: !!o18, collectionsPerDay: cpd, schedule: { ...sched },
+    lastClearTime: now, lastClearTemp: o18 ? '18' : '25', virginDeadline: computeDeadline(now, !!o18), todayActions: [], createdAt: now };
+}
+
+// Parse "HH:MM" to minutes since midnight
+function parseHHMM(s) { if (!s) return null; const [h, m] = s.split(':').map(Number); return h * 60 + m; }
+function fmtHHMM(mins) { const h = Math.floor(((mins % 1440) + 1440) % 1440 / 60); const m = ((mins % 1440) + 1440) % 1440 % 60; return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); }
+
+// Format ms duration as "1h 20m" or "35m"
+function fmtDur(ms) {
+  const neg = ms < 0; const a = Math.abs(ms);
+  const m = Math.round(a / 60000);
+  if (m < 60) return (neg ? '-' : '') + m + 'm';
+  const h = Math.floor(m / 60); const rm = m % 60;
+  return (neg ? '-' : '') + h + 'h' + (rm ? ' ' + rm + 'm' : '');
+}
+
+// Compute virgin deadline from a clear timestamp
+function computeDeadline(clearIso, o18) {
+  if (!clearIso) return null;
+  return new Date(new Date(clearIso).getTime() + getVirginWindowH(o18) * 3600000).toISOString();
+}
+
+// Core dynamic engine: compute next actions for a VCS stock
+function computeNextActions(vcs, now) {
+  if (!vcs?.enabled) return [];
+  now = now || new Date();
+  const { overnightAt18, collectionsPerDay, schedule, lastClearTime, lastClearTemp, todayActions } = vcs;
+  // Use lastClearTemp for current cycle behavior (allows "No, room temp" override)
+  const cycleAt18 = lastClearTemp ? lastClearTemp === '18' : overnightAt18;
+  const windowMs = getVirginWindowH(cycleAt18) * 3600000;
+
+  // Build the ordered action sequence for one cycle
+  const isMorningCollect = cycleAt18;
+  const actions = [];
+  actions.push({ key: 'evening', type: 'clear', label: overnightAt18 ? 'Clear → 18°C' : 'Clear', scheduled: schedule.eveningClear });
+  actions.push({ key: 'morning', type: isMorningCollect ? 'collect' : 'clear_discard',
+    label: isMorningCollect ? 'Morning collect' : 'Morning clear + discard', scheduled: schedule.morningCollect });
+  if (collectionsPerDay === 3 && schedule.middayCollect)
+    actions.push({ key: 'midday', type: 'collect', label: 'Midday collect', scheduled: schedule.middayCollect });
+  actions.push({ key: 'afternoon', type: 'collect_clear', label: 'Afternoon collect + clear', scheduled: schedule.afternoonCollect });
+
+  // Only count actions from the current window (since last clear)
+  const doneKeys = new Set();
+  const clearMs = lastClearTime ? new Date(lastClearTime).getTime() : 0;
+  const nowMs = now.getTime();
+
+  // Compute deadline from last clear
+  const deadline = lastClearTime ? clearMs + windowMs : null;
+  const cycleExpired = deadline && nowMs > deadline + 30 * 60000;
+
+  // The clear that set lastClearTime IS the evening clear - auto-mark it done
+  if (lastClearTime) doneKeys.add('evening');
+  (todayActions || []).forEach(a => {
+    if (!a.key) return;
+    const actionMs = a.time ? new Date(a.time).getTime() : 0;
+    if (actionMs >= clearMs && !cycleExpired) doneKeys.add(a.key);
+  });
+
+  // Fixed schedule times - no dynamic shift. Deadline moves with actual clear time.
+  const result = [];
+  for (const act of actions) {
+    if (doneKeys.has(act.key)) continue;
+
+    const schedMins = parseHHMM(act.scheduled);
+    if (schedMins === null) continue;
+
+    // Place at the next occurrence of scheduled time after the clear
+    const clearDate = lastClearTime ? new Date(lastClearTime) : new Date(now);
+    const baseDay = new Date(clearDate); baseDay.setHours(0, 0, 0, 0);
+    let suggestedMs = baseDay.getTime() + schedMins * 60000;
+
+    // Day boundary: if scheduled time is before the clear, it's tomorrow
+    if (suggestedMs <= clearMs) suggestedMs += 86400000;
+
+    const isOverdue = nowMs > suggestedMs + 30 * 60000;
+    const graceMs = 30 * 60000;
+    const isInGracePeriod = deadline ? nowMs > deadline && nowMs <= deadline + graceMs : false;
+    const isPastDeadline = deadline ? nowMs > deadline + graceMs : false;
+
+    result.push({
+      ...act, suggestedTime: new Date(suggestedMs).toISOString(), suggestedMs,
+      isOverdue, isInGracePeriod, isPastDeadline,
+      deadline: deadline ? new Date(deadline).toISOString() : null,
+      deadlineMs: deadline, timeUntilMs: suggestedMs - nowMs,
+    });
+  }
+
+  // Sort by chronological time
+  result.sort((a, b) => a.suggestedMs - b.suggestedMs);
+
+  // Auto-advance: if the first action is >2h overdue and there's a later action, skip it
+  while (result.length > 1 && result[0].timeUntilMs < -2 * 3600000) {
+    result[0].skipped = true;
+    result.shift();
+  }
+
+  return result;
+}
+
+// Status color: green/yellow/red
+function getVcsStatus(vcs, now) {
+  if (!vcs?.enabled) return 'none';
+  now = now || new Date();
+  const actions = computeNextActions(vcs, now);
+  if (!actions.length) return 'green';
+  const next = actions[0];
+  if (next.isPastDeadline) return 'red';
+  if (next.isInGracePeriod) return 'red';
+  if (next.isOverdue) return 'yellow';
+  if (next.timeUntilMs < 30 * 60000) return 'yellow';
+  return 'green';
+}
+
+// Progress through virgin window (0-1)
+function vcsWindowProgress(vcs, now) {
+  if (!vcs?.lastClearTime) return 0;
+  now = now || new Date();
+  const clearMs = new Date(vcs.lastClearTime).getTime();
+  const nowMs = now.getTime();
+  // Progress tracks toward next scheduled action, not the expiry deadline
+  const actions = computeNextActions(vcs, now);
+  if (actions.length > 0) {
+    const nextMs = actions[0].suggestedMs;
+    if (nextMs > clearMs) return Math.max(0, Math.min(1, (nowMs - clearMs) / (nextMs - clearMs)));
+  }
+  // Fallback: track toward 8h expiry if no actions left
+  const windowMs = getVirginWindowH() * 3600000;
+  return Math.max(0, Math.min(1, (nowMs - clearMs) / windowMs));
+}
+
+// Format time as "HH:MM" with date context
+function fmtTime(iso) {
+  if (!iso) return '--:--';
+  const d = new Date(iso);
+  const now = new Date();
+  const time = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const today = new Date(now); today.setHours(0,0,0,0);
+  const target = new Date(d); target.setHours(0,0,0,0);
+  const diff = (target - today) / 86400000;
+  if (diff === 0) return 'Today ' + time;
+  if (diff === -1) return 'Yesterday ' + time;
+  if (diff === 1) return 'Tomorrow ' + time;
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  return days[d.getDay()] + ' ' + time;
+}
+
+// Flip schedules: expanded always 25°C → 21d (3wk); stock varies by temp
+function getFlipDays(s) {
+  if ((s.variant || 'stock') === 'expanded') return 21;
+  if (is18(s.location)) return 42;
+  if (s.location === 'RT') return 28;
+  return 14; // 25°C variants
+}
+
+function calcTL(setup, temp) {
+  if (is18(temp)) return { virginStart: addDays(setup, 17), virginEnd: addDays(setup, 19), progenyStart: addDays(setup, 19), progenyEnd: addDays(setup, 23) };
+  return { virginStart: addDays(setup, 9), virginEnd: addDays(setup, 11), progenyStart: addDays(setup, 11), progenyEnd: addDays(setup, 15) };
+}
+function getTL(c) {
+  return calcTL(c.setupDate, c.temperature);
+}
+
+const STATUSES = ['set up', 'waiting for virgins', 'collecting virgins', 'waiting for progeny', 'collecting progeny', 'screening', 'ripening', 'done'];
+const STATUS_SHORT = ['set', 'w.vgn', 'vgn', 'w.prg', 'coll', 'scr', 'ripe', 'done'];
+const nextSt = s => { const i = STATUSES.indexOf(s); return i < STATUSES.length - 1 ? STATUSES[i + 1] : s; };
+const stIdx = s => STATUSES.indexOf(s);
+
+const OPTO = ['cschrimson', 'chrimson', 'chr2', 'reachr', 'chrmine', 'chronos', 'cochr', 'gtacr'];
+const CALC = ['gcamp', 'jgcamp', 'rgeco', 'rcamp'];
+function detect(g, name) { const l = (g || '').toLowerCase(); const n = (name || '').toLowerCase(); return { o: OPTO.some(k => l.includes(k)), c: CALC.some(k => l.includes(k)) || n.includes('gfp') || l.includes('gfp') }; }
+function stockTags(s) {
+  const tags = [];
+  const g = (s.genotype || '').toLowerCase();
+  const n = (s.notes || '').toLowerCase();
+  const all = g + ' ' + n;
+  if (/\bdead\b/i.test(s.notes || '')) tags.push('Dead');
+  if (/\balive\b/i.test(s.notes || '')) tags.push('Alive');
+  if (OPTO.some(k => all.includes(k))) tags.push('Opto');
+  if (CALC.some(k => all.includes(k)) || all.includes('gfp')) tags.push('Imaging');
+  const hasAD = all.includes('p65.ad') || all.includes('-p65.ad}') || n.includes(' ad ') || n.includes(' ad(') || /\bAD\b/.test(s.notes || '');
+  const hasDBD = all.includes('gal4.dbd') || all.includes('-gal4.dbd}') || n.includes(' dbd ') || n.includes(' dbd(') || /\bDBD\b/.test(s.notes || '');
+  if (hasAD && hasDBD) { tags.push('Split-GAL4'); }
+  else { if (hasAD) tags.push('AD'); if (hasDBD) tags.push('DBD'); }
+  if (/lexa/i.test(g) || /\blexa\b/i.test(n)) tags.push('LexA');
+  if (/gal4/i.test(g) && !hasAD && !hasDBD) tags.push('GAL4');
+  if (/uas/i.test(g) || /\buas\b/i.test(n) || /\buas\b/i.test(s.name || '')) tags.push('UAS');
+  if (s.demo) tags.push('Demo');
+  return tags;
+}
+const TAG_STYLE = { Dead: { background: 'rgba(239,68,68,0.25)', color: '#fca5a5' }, Alive: { background: 'rgba(34,197,94,0.25)', color: '#86efac' }, Opto: { background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }, Imaging: { background: 'rgba(34,197,94,0.1)', color: '#86efac' }, AD: { background: 'rgba(249,168,212,0.1)', color: '#f9a8d4' }, DBD: { background: 'rgba(147,197,253,0.1)', color: '#93c5fd' }, 'Split-GAL4': { background: 'rgba(139,92,246,0.1)', color: '#a78bfa' }, UAS: { background: 'rgba(251,191,36,0.1)', color: '#fbbf24' }, Demo: { background: 'rgba(148,163,184,0.15)', color: '#94a3b8' } };
+function TagBadges({ tags, limit }) {
+  const show = limit ? tags.slice(0, limit) : tags;
+  const more = limit && tags.length > limit ? tags.length - limit : 0;
+  return <>{show.map(t => <span key={t} className="badge" style={TAG_STYLE[t] || { background: 'rgba(253,224,71,0.1)', color: '#fde047' }}>{t}</span>)}{more > 0 && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-3)' }}>+{more}</span>}</>;
+}
+function crossDetect(c, stocks) {
+  const a = detect(stocks.find(s => s.id === c.parentA)?.genotype);
+  const b = detect(stocks.find(s => s.id === c.parentB)?.genotype);
+  return { o: a.o || b.o, c: a.c || b.c };
+}
+
+// Deduce screening markers from parent genotypes
+const BALANCER_MARKERS = [
+  { pattern: /CyO/i, name: 'CyO', phenotype: 'Curly wings', select: 'non-Curly', chromosome: '2nd' },
+  { pattern: /TM3/i, name: 'TM3', phenotype: 'Stubble bristles (short)', select: 'non-Stubble', chromosome: '3rd' },
+  { pattern: /TM6B/i, name: 'TM6B', phenotype: 'Tubby (short fat larva/pupa) + Humeral', select: 'non-Tubby', chromosome: '3rd' },
+  { pattern: /TM6/i, name: 'TM6', phenotype: 'Tubby', select: 'non-Tubby', chromosome: '3rd' },
+  { pattern: /FM7/i, name: 'FM7', phenotype: 'Bar eyes (narrow)', select: 'non-Bar', chromosome: 'X' },
+  { pattern: /Tb\b/i, name: 'Tb', phenotype: 'Tubby body', select: 'non-Tubby', chromosome: '' },
+  { pattern: /Hu\b/i, name: 'Hu', phenotype: 'Humeral (extra bristles on humeri)', select: 'non-Humeral', chromosome: '' },
+  { pattern: /Sb\b/i, name: 'Sb', phenotype: 'Stubble (short bristles)', select: 'non-Stubble', chromosome: '' },
+  { pattern: /Ser\b/i, name: 'Ser', phenotype: 'Serrate wings', select: 'non-Serrate', chromosome: '' },
+  { pattern: /\bw\[/i, name: 'w-', phenotype: 'White eyes', select: 'white-eyed (no mini-white)', chromosome: 'X' },
+  { pattern: /\bw\+/i, name: 'w+', phenotype: 'Red/orange eyes (mini-white)', select: 'red/orange-eyed', chromosome: 'X' },
+  { pattern: /GFP/i, name: 'GFP', phenotype: 'Green fluorescence', select: 'GFP-positive', chromosome: '' },
+  { pattern: /DsRed|RFP|tdTomato/i, name: 'RFP', phenotype: 'Red fluorescence', select: 'RFP-positive', chromosome: '' },
+];
+
+function getScreeningGuide(cross, stocks) {
+  const gA = stocks.find(s => s.id === cross.parentA)?.genotype || '';
+  const gB = stocks.find(s => s.id === cross.parentB)?.genotype || '';
+  const combined = gA + ' ; ' + gB;
+  const found = [];
+  const seen = new Set();
+  BALANCER_MARKERS.forEach(m => {
+    if (m.pattern.test(combined) && !seen.has(m.name)) {
+      seen.add(m.name);
+      const inA = m.pattern.test(gA);
+      const inB = m.pattern.test(gB);
+      found.push({ ...m, source: inA && inB ? 'both' : inA ? 'virgin' : 'male' });
+    }
+  });
+  return found;
+}
+
+function useLS(key, init) {
+  const [v, setV] = useState(() => { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : init; } catch { return init; } });
+  const prevKey = useRef(key);
+  useEffect(() => {
+    if (prevKey.current !== key) {
+      try { const s = localStorage.getItem(key); setV(s ? JSON.parse(s) : init); } catch { setV(init); }
+      prevKey.current = key;
+    }
+  }, [key]);
+  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) { if (e?.name === 'QuotaExceededError') console.error('localStorage full'); } }, [key, v]);
+  return [v, setV];
+}
+
+function sn(stocks, id) { return stocks.find(s => s.id === id)?.name || '??'; }
+function sg(stocks, id) { return stocks.find(s => s.id === id)?.genotype || ''; }
+function cl(c, S) { return `${sn(S, c.parentA)} × ${sn(S, c.parentB)}`; }
+function clFull(c, S) { return { virgin: sn(S, c.parentA), male: sn(S, c.parentB) }; }
+
+/* ========== ICS EXPORT ========== */
+function dlICS(events, name) {
+  const f = d => d.replace(/-/g, '');
+  let s = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Flomington//EN\r\nCALSCALE:GREGORIAN\r\n';
+  events.forEach(e => {
+    s += `BEGIN:VEVENT\r\nDTSTART;VALUE=DATE:${f(e.date)}\r\nDTEND;VALUE=DATE:${f(addDays(e.date, 1))}\r\nSUMMARY:${(e.title || '').replace(/[\\;,\n]/g, ' ')}\r\nDESCRIPTION:${(e.desc || '').replace(/[\\;,\n]/g, ' ')}\r\nUID:${uid()}@flomington\r\nEND:VEVENT\r\n`;
+  });
+  s += 'END:VCALENDAR\r\n';
+  const b = new Blob([s], { type: 'text/calendar' }); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u);
+}
+
+/* ========== DEMO DATA ========== */
+function makeDemoData() {
+  const t = today();
+
+  // ════════════════════════════════════════════════════════════════════
+  // STOCKS - 24 entries
+  // Coverage matrix:
+  //   Temps:        25inc (8), 25room (4), 18 (7), RT (5)
+  //   Variants:     expanded (7), stock (17)
+  //   Collections:  Lab Stocks (7), Flo Stocks 1 (6), Flo Stocks 2 (5), No Collection (4), Opto Tools (2)
+  //   Sources:      Bloomington (5), VDRC (3), Kyoto (2), Other (1), gift-only (3), none (10)
+  //   Maintainers:  Flo (4), Bella (3), Seba (3), Catherine (3), Tomke (3), Shahar (3), Myrto (3), none (2)
+  //   Flip status:  overdue 100%+ (4), near 80-99% (4), mid 40-79% (6), fresh <40% (8), exact threshold (2)
+  //   Opto:         CsChrimson (2), Chrimson (1), ReaChR (1), GtACR (1)
+  //   Imaging:      GCaMP/jGCaMP (3), RCaMP (1)
+  //   FlyBase IDs:  6 stocks with, 18 without
+  // ════════════════════════════════════════════════════════════════════
+  const stocks = [
+    // ── EXPANDED VARIANTS (7) ──────────────────────────────────────────
+    // s1: Expanded, 25inc, Lab Stocks, OVERDUE (10d of 7d → 143%)
+    //     Flo, Bloomington + FlyBase
+    { id: 's1', name: 'Oregon-R', genotype: '+', location: '25inc',
+      createdAt: addDays(t, -60), lastFlipped: addDays(t, -10),
+      notes: 'Wild type reference strain - expanded, overdue for flip',
+      variant: 'expanded', category: 'Lab Stocks', maintainer: 'Flo',
+      source: 'Bloomington', sourceId: '25211', flybaseId: 'FBst0025211',
+      vcs: { enabled: true, overnightAt18: true, collectionsPerDay: 2,
+        schedule: { eveningClear: '17:30', morningCollect: '09:30', middayCollect: null, afternoonCollect: '17:00' },
+        lastClearTime: new Date(new Date().setHours(17, 30, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '18', virginDeadline: null, todayActions: [], createdAt: addDays(t, -14) } },
+    // s2: Expanded, 25room, No Collection, recently flipped (3d of 7d → 43%)
+    //     Bella, no source
+    { id: 's2', name: 'w1118', genotype: 'w[1118]', location: '25room',
+      createdAt: addDays(t, -45), lastFlipped: addDays(t, -3),
+      notes: 'White-eyed host - expanded, recently flipped',
+      variant: 'expanded', category: 'No Collection', maintainer: 'Bella',
+      vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 3,
+        schedule: { eveningClear: '18:00', morningCollect: '09:00', middayCollect: '12:00', afternoonCollect: '16:30' },
+        lastClearTime: new Date(new Date().setHours(18, 0, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '25', virginDeadline: null, todayActions: [], createdAt: addDays(t, -7) } },
+    // s3: Expanded, RT, Flo Stocks 2, near flip (6d of 7d → 86%)
+    //     Shahar, Kyoto source, VCS 25°C 2×
+    { id: 's3', name: 'Canton-S', genotype: '+', location: 'RT',
+      createdAt: addDays(t, -120), lastFlipped: addDays(t, -6),
+      notes: 'Wild type, good for behaviour - expanded at RT',
+      variant: 'expanded', category: 'Flo Stocks 2', maintainer: 'Shahar',
+      source: 'Kyoto', sourceId: '105666',
+      vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 2,
+        schedule: { eveningClear: '18:00', morningCollect: '09:00', middayCollect: null, afternoonCollect: '14:30' },
+        lastClearTime: new Date(new Date().setHours(18, 0, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '25', virginDeadline: null,
+        todayActions: [{ type: 'collect', key: 'morning', time: new Date(new Date().setHours(9, 15, 0, 0)).toISOString(), scheduled: '09:00' }],
+        createdAt: addDays(t, -10) } },
+    // s4e: Expanded, 18C, Lab Stocks, fresh (1d of 7d → 14%)
+    //     Flo, Bloomington + FlyBase, VCS 18°C 3×
+    { id: 's4e', name: 'yw (expanded)', genotype: 'y[1] w[1]', location: '18',
+      createdAt: addDays(t, -30), lastFlipped: addDays(t, -1),
+      notes: 'Yellow-white host line - expanded backup at 18C, just flipped',
+      variant: 'expanded', category: 'Lab Stocks', maintainer: 'Flo',
+      source: 'Bloomington', sourceId: '1495', flybaseId: 'FBst0001495',
+      vcs: { enabled: true, overnightAt18: true, collectionsPerDay: 3,
+        schedule: { eveningClear: '17:30', morningCollect: '09:30', middayCollect: '14:00', afternoonCollect: '17:00' },
+        lastClearTime: new Date(new Date().setHours(17, 45, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '18', virginDeadline: null, todayActions: [], createdAt: addDays(t, -5) } },
+    // s24: Expanded, 25inc, Flo Stocks 1, mid (4d of 7d → 57%)
+    //     Flo, no source, VCS 25°C 3×
+    { id: 's24', name: 'w[*] (expanded)', genotype: 'w[*]', location: '25inc',
+      createdAt: addDays(t, -80), lastFlipped: addDays(t, -4),
+      notes: 'White-star host for injections - expanded',
+      variant: 'expanded', category: 'Flo Stocks 1', maintainer: 'Flo',
+      vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 3,
+        schedule: { eveningClear: '18:00', morningCollect: '09:00', middayCollect: '12:00', afternoonCollect: '16:30' },
+        lastClearTime: new Date(new Date().setHours(9, 30, 0, 0)).toISOString(),
+        lastClearTemp: '25', virginDeadline: null,
+        todayActions: [{ type: 'collect', key: 'morning', time: new Date(new Date().setHours(9, 30, 0, 0)).toISOString(), scheduled: '09:00' }],
+        createdAt: addDays(t, -21) } },
+    // s25: Expanded, RT, No Collection, OVERDUE (9d of 7d → 129%)
+    //     Myrto, no source
+    { id: 's25', name: 'Berlin-K', genotype: '+', location: 'RT',
+      createdAt: addDays(t, -90), lastFlipped: addDays(t, -9),
+      notes: 'Wild type Berlin strain - expanded at RT, overdue',
+      variant: 'expanded', category: 'No Collection', maintainer: 'Myrto' },
+    // s26: Expanded, 25room, Flo Stocks 2, exact threshold (7d of 7d → 100%)
+    //     Shahar, gift from Dickson Lab
+    { id: 's26', name: 'Iso31 (expanded)', genotype: 'w[1118] iso31', location: '25room',
+      createdAt: addDays(t, -40), lastFlipped: addDays(t, -7),
+      notes: 'Isogenic w1118 - expanded, exactly at flip threshold',
+      variant: 'expanded', category: 'Flo Stocks 2', maintainer: 'Shahar',
+      isGift: true, giftFrom: 'Dickson Lab' },
+
+    // ── OPTO STOCKS (5) ────────────────────────────────────────────────
+    // s4: Stock, 18C, Lab Stocks, OVERDUE (50d of 42d → 119%)
+    //     Flo, Bloomington + FlyBase, CsChrimson
+    { id: 's4', name: 'UAS-CsChrimson', genotype: 'w[*]; P{20XUAS-IVS-CsChrimson.mVenus}attP18',
+      location: '18', createdAt: addDays(t, -90), lastFlipped: addDays(t, -50),
+      notes: 'Channelrhodopsin for optogenetics - overdue at 18C',
+      variant: 'stock', category: 'Lab Stocks', maintainer: 'Flo',
+      source: 'Bloomington', sourceId: '79039', flybaseId: 'FBst0079039' },
+    // s5: Stock, 25inc, Lab Stocks, fresh (2d of 14d → 14%)
+    //     Seba, no source, CsChrimson split-GAL4
+    { id: 's5', name: 'R58E02-AD; R40F04-DBD > CsChrimson',
+      genotype: 'w[*]; P{R58E02-p65.AD}attP40/CyO; P{R40F04-GAL4.DBD}attP2/P{20XUAS-CsChrimson.mVenus}attP18',
+      location: '25inc', createdAt: addDays(t, -20), lastFlipped: addDays(t, -2),
+      notes: 'Split-GAL4 CsChrimson line for optogenetics',
+      variant: 'stock', category: 'Lab Stocks', maintainer: 'Flo' },
+    // s6: Stock, 25inc, Flo Stocks 2, near flip (13d of 14d → 93%)
+    //     Tomke, no source, CsChrimson MBON split
+    { id: 's6', name: 'MB298B > CsChrimson',
+      genotype: 'w[*]; P{R19F09-p65.AD}attP40/P{20XUAS-CsChrimson.mVenus}su(Hw)attP5; P{R25D01-GAL4.DBD}attP2',
+      location: '25inc', createdAt: addDays(t, -15), lastFlipped: addDays(t, -13),
+      notes: 'MBON split for opto, near flip threshold',
+      variant: 'stock', category: 'Flo Stocks 2', maintainer: 'Shahar' },
+    // s7: Stock, 25inc, Lab Stocks, mid (8d of 14d → 57%), gift from Bhatt Lab
+    //     Shahar, GtACR1 (OPTO detect)
+    { id: 's7', name: 'UAS-GtACR1',
+      genotype: 'w[*]; P{20XUAS-GtACR1-EYFP}attP2',
+      location: '25inc', createdAt: addDays(t, -25), lastFlipped: addDays(t, -8),
+      notes: 'Anion channelrhodopsin for silencing - gift from Bhatt Lab',
+      variant: 'stock', category: 'Lab Stocks', maintainer: 'Flo',
+      isGift: true, giftFrom: 'Bhatt Lab', flybaseId: 'FBtp0131990' },
+    // s17: Stock, 18C, Opto Tools, fresh (5d of 42d → 12%)
+    //     Bella, Bloomington, ReaChR (OPTO detect)
+    { id: 's17', name: 'UAS-ReaChR',
+      genotype: 'w[*]; P{20XUAS-IVS-ReaChR}attP2',
+      location: '18', createdAt: addDays(t, -60), lastFlipped: addDays(t, -5),
+      notes: 'Red-shifted channelrhodopsin for deep-tissue opto',
+      variant: 'stock', category: 'Opto Tools', maintainer: 'Bella',
+      source: 'Bloomington', sourceId: '53741', flybaseId: 'FBst0053741' },
+    // s18: Stock, RT, Opto Tools, near (24d of 28d → 86%)
+    //     Catherine, gift from Jayaraman Lab, Chrimson (OPTO detect - distinct from CsChrimson)
+    { id: 's18', name: 'UAS-Chrimson',
+      genotype: 'w[*]; P{20XUAS-IVS-Chrimson.mVenus}attP18',
+      location: 'RT', createdAt: addDays(t, -70), lastFlipped: addDays(t, -24),
+      notes: 'Chrimson (non-Cs variant) for opto - gift from Jayaraman Lab',
+      variant: 'stock', category: 'Opto Tools', maintainer: 'Bella',
+      isGift: true, giftFrom: 'Jayaraman Lab' },
+
+    // ── CALCIUM / IMAGING STOCKS (4) ───────────────────────────────────
+    // s8: Stock, 18C, Lab Stocks, near (38d of 42d → 90%), gift from Jefferis Lab
+    //     Flo, jGCaMP7f (CALC detect)
+    { id: 's8', name: 'UAS-jGCaMP7f',
+      genotype: 'w[*]; P{20XUAS-jGCaMP7f}VK5',
+      location: '18', createdAt: addDays(t, -30), lastFlipped: addDays(t, -38),
+      notes: 'Fast calcium indicator - gift from Jefferis Lab',
+      variant: 'stock', category: 'Lab Stocks', maintainer: 'Flo',
+      isGift: true, giftFrom: 'Jefferis Lab' },
+    // s9: Stock, 25inc, Flo Stocks 1, mid (5d of 14d → 36%)
+    //     Myrto, no source, jGCaMP8m MBON split (CALC detect)
+    { id: 's9', name: 'MBON-a1 > GCaMP8m',
+      genotype: 'w[*]; P{R12G04-p65.AD}attP40/P{20XUAS-jGCaMP8m}attP40; P{VT060727-GAL4.DBD}attP2',
+      location: '25inc', createdAt: addDays(t, -35), lastFlipped: addDays(t, -5),
+      notes: 'MBON split-GAL4 with GCaMP8m for 2P imaging',
+      variant: 'stock', category: 'Flo Stocks 1', maintainer: 'Flo' },
+    // s10: Stock, 18C, Flo Stocks 1, mid (14d of 42d → 33%)
+    //     Flo, VDRC, RCaMP (CALC detect)
+    { id: 's10', name: 'UAS-RCaMP1.07',
+      genotype: 'w[*]; P{UAS-RCaMP1.07}2',
+      location: '18', createdAt: addDays(t, -55), lastFlipped: addDays(t, -14),
+      notes: 'Red calcium indicator for dual-color imaging - from VDRC',
+      variant: 'stock', category: 'Flo Stocks 1', maintainer: 'Flo',
+      source: 'VDRC', sourceId: '330328' },
+    // s19: Stock, 25room, Flo Stocks 1, fresh (2d of 14d → 14%)
+    //     Myrto, no source, GCaMP6s (CALC detect)
+    { id: 's19', name: 'UAS-GCaMP6s',
+      genotype: 'w[*]; P{20XUAS-IVS-GCaMP6s}attP40',
+      location: '25room', createdAt: addDays(t, -50), lastFlipped: addDays(t, -2),
+      notes: 'Slow GCaMP6s for sustained calcium signals',
+      variant: 'stock', category: 'Flo Stocks 1', maintainer: 'Flo' },
+
+    // ── DRIVER & REPORTER STOCKS (8) ───────────────────────────────────
+    // s11: Stock, 25inc, Flo Stocks 1, near (11d of 14d → 79%)
+    //     Flo, Bloomington + FlyBase, balanced 2nd
+    { id: 's11', name: 'elav-GAL4',
+      genotype: 'P{GAL4-elav.L}2/CyO',
+      location: '25inc', createdAt: addDays(t, -90), lastFlipped: addDays(t, -11),
+      notes: 'Pan-neuronal driver - near flip threshold',
+      variant: 'stock', category: 'Flo Stocks 1', maintainer: 'Flo',
+      source: 'Bloomington', sourceId: '8765', flybaseId: 'FBst0008765' },
+    // s12: Stock, 25room, No Collection, mid (10d of 14d → 71%)
+    //     Catherine, no source
+    { id: 's12', name: 'GMR-GAL4',
+      genotype: 'P{GAL4-ninaE.GMR}12',
+      location: '25room', createdAt: addDays(t, -90), lastFlipped: addDays(t, -10),
+      notes: 'Eye-specific driver - No Collection category',
+      variant: 'stock', category: 'No Collection', maintainer: 'Catherine' },
+    // s13: Stock, 18C, Lab Stocks, fresh (4d of 42d → 10%)
+    //     Seba, Bloomington + FlyBase, balanced 3rd (TM3/TM6B)
+    { id: 's13', name: 'UAS-mCD8::GFP',
+      genotype: 'w[*]; P{UAS-mCD8.GFP}LL5; TM3,Sb[1]/TM6B,Tb[1]',
+      location: '18', createdAt: addDays(t, -50), lastFlipped: addDays(t, -4),
+      notes: 'Membrane GFP, balanced 3rd - from Bloomington',
+      variant: 'stock', category: 'Lab Stocks', maintainer: 'Flo',
+      source: 'Bloomington', sourceId: '5130', flybaseId: 'FBst0005130' },
+    // s14: Stock, 25inc, Flo Stocks 1, mid (7d of 14d → 50%)
+    //     Tomke, VDRC
+    { id: 's14', name: 'TH-GAL4 (VDRC)',
+      genotype: 'P{GAL4-TH.D}D',
+      location: '25inc', createdAt: addDays(t, -40), lastFlipped: addDays(t, -7),
+      notes: 'Dopaminergic driver - from VDRC',
+      variant: 'stock', category: 'Flo Stocks 1', maintainer: 'Flo',
+      source: 'VDRC', sourceId: '108170' },
+    // s15: Stock, RT, Flo Stocks 2, OVERDUE (30d of 28d → 107%)
+    //     Shahar, Other source, gift from Rubin Lab
+    { id: 's15', name: 'MB247-DsRed',
+      genotype: 'w[*]; P{MB247-DsRed}1',
+      location: 'RT', createdAt: addDays(t, -100), lastFlipped: addDays(t, -30),
+      notes: 'Mushroom body reporter - gift from Rubin Lab, overdue at RT',
+      variant: 'stock', category: 'Flo Stocks 2', maintainer: 'Shahar',
+      source: 'Other', sourceId: '', isGift: true, giftFrom: 'Rubin Lab' },
+    // s16: Stock, 25inc, Lab Stocks, exact threshold (14d of 14d → 100%)
+    //     NO MAINTAINER, Kyoto + FlyBase
+    { id: 's16', name: 'nSyb-GAL4',
+      genotype: 'w[*]; P{nSyb-GAL4.S}3',
+      location: '25inc', createdAt: addDays(t, -70), lastFlipped: addDays(t, -14),
+      notes: 'Pan-neuronal driver (nSynaptobrevin) - exactly at flip day, unclaimed',
+      variant: 'stock', category: 'Lab Stocks', maintainer: 'Flo',
+      source: 'Kyoto', sourceId: '200228', flybaseId: 'FBst0500064' },
+    // s20: Stock, RT, Flo Stocks 2, mid (15d of 28d → 54%)
+    //     Tomke, VDRC, mushroom body driver
+    { id: 's20', name: 'VT30559-GAL4',
+      genotype: 'w[1118]; P{VT030559-GAL4.DBD}attP2',
+      location: 'RT', createdAt: addDays(t, -65), lastFlipped: addDays(t, -15),
+      notes: 'KC driver for mushroom body experiments',
+      variant: 'stock', category: 'Flo Stocks 2', maintainer: 'Shahar',
+      source: 'VDRC', sourceId: '200228' },
+    // s21: Stock, 25room, No Collection, fresh (1d of 14d → 7%)
+    //     NO MAINTAINER, no source - new arrival, not yet assigned
+    { id: 's21', name: 'Repo-GAL4',
+      genotype: 'w[*]; P{GAL4-repo}1/TM3,Sb[1]',
+      location: '25room', createdAt: addDays(t, -1), lastFlipped: addDays(t, -1),
+      notes: 'Glial driver - just arrived, needs assignment',
+      variant: 'stock', category: 'No Collection' },
+    // s22: Stock, 18C, Flo Stocks 2, OVERDUE (48d of 42d → 114%)
+    //     Shahar, no source
+    { id: 's22', name: 'OR-R (stock)',
+      genotype: '+',
+      location: '18', createdAt: addDays(t, -110), lastFlipped: addDays(t, -48),
+      notes: 'Oregon-R stock backup at 18C - overdue',
+      variant: 'stock', category: 'Flo Stocks 2', maintainer: 'Shahar' },
+    // s23: Stock, RT, Flo Stocks 1, mid (12d of 28d → 43%)
+    //     Seba, Kyoto source
+    { id: 's23', name: 'fruP1-GAL4',
+      genotype: 'w[*]; P{fruP1-GAL4}1',
+      location: 'RT', createdAt: addDays(t, -45), lastFlipped: addDays(t, -12),
+      notes: 'Fruitless driver for courtship circuits',
+      variant: 'stock', category: 'Flo Stocks 1', maintainer: 'Flo',
+      source: 'Kyoto', sourceId: '108522' },
+  ];
+
+  // ════════════════════════════════════════════════════════════════════
+  // CROSSES - 20 entries
+  // Coverage matrix:
+  //   Statuses:     set up (2), waiting for virgins (2), collecting virgins (3),
+  //                 waiting for progeny (2), collecting progeny (2), ripening (3),
+  //                 screening (2), done (4)
+  //   Temps:        25inc (12), 25room (3), 18 (4), RT (1)
+  //   Opto ripening (3d): c6 (ripening), c13 (ripening, near done)
+  //   GCaMP ripening (5d): c14 (ripening, mid)
+  //   Skip ripening (no opto/calc): c4 (waiting for progeny), c8 (done), c15 (collecting progeny)
+  //   Experiment types: optogenetics (5), 2p (4), 2p+vr (2), behavior (3),
+  //                     flydisco (2), vr (1), dissection (1), other (1), none (1)
+  //   Cross types:  simple (18), sequential (2)
+  //   Owners:       Flo (3), Bella (3), Seba (3), Catherine (3), Tomke (2),
+  //                 Shahar (3), Myrto (3)
+  // ════════════════════════════════════════════════════════════════════
+  const crosses = [
+    // ── STATUS: 'set up' (2) ───────────────────────────────────────────
+    // c1: set up, opto, 25inc, Flo
+    //     elav-GAL4 (s11) x UAS-CsChrimson (s4)
+    { id: 'c1', parentA: 's11', parentB: 's4', temperature: '25inc',
+      setupDate: addDays(t, -3), status: 'set up', owner: 'Flo',
+      notes: 'elav > CsChrimson for optogenetics behavior assay',
+      targetCount: 30, collected: [], vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'optogenetics', experimentDate: addDays(t, 15),
+      retinalStartDate: '' },
+    // c9: set up, 2p+vr, 18C, Myrto
+    //     MBON GCaMP (s9) x UAS-mCD8::GFP (s13), slow timeline
+    { id: 'c9', parentA: 's9', parentB: 's13', temperature: '18',
+      setupDate: addDays(t, -5), status: 'set up', owner: 'Myrto',
+      notes: 'GCaMP imaging with VR at 18C - slow timeline',
+      targetCount: 15, collected: [], vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: '2p+vr', experimentDate: '',
+      retinalStartDate: '' },
+
+    // ── STATUS: 'waiting for virgins' (2) ──────────────────────────────
+    // c2: waiting for virgins, opto, 25inc, Seba, near auto-promote (8d of 9d)
+    //     R58E02 CsChrimson (s5) x Canton-S (s3)
+    { id: 'c2', parentA: 's5', parentB: 's3', temperature: '25inc',
+      setupDate: addDays(t, -8), status: 'waiting for virgins', owner: 'Seba',
+      notes: 'Opto cross - near auto-promote threshold',
+      targetCount: 25, collected: [], vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'optogenetics', experimentDate: addDays(t, 10),
+      retinalStartDate: addDays(t, -3) },
+    // c13w: waiting for virgins, dissection, 18C, Bella, early (3d of 17d)
+    //       TH-GAL4 (s14) x UAS-mCD8::GFP (s13)
+    { id: 'c13w', parentA: 's14', parentB: 's13', temperature: '18',
+      setupDate: addDays(t, -3), status: 'waiting for virgins', owner: 'Bella',
+      notes: 'TH-GAL4 x GFP for dopaminergic neuron dissection at 18C',
+      targetCount: 10, collected: [], vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'dissection', experimentDate: addDays(t, 30),
+      retinalStartDate: '' },
+
+    // ── STATUS: 'collecting virgins' (3) ───────────────────────────────
+    // c3: collecting virgins, 2p, 25inc, Myrto, partial (5 of 5)
+    //     MBON GCaMP (s9) x UAS-jGCaMP7f (s8)
+    { id: 'c3', parentA: 's9', parentB: 's8', temperature: '25inc',
+      setupDate: addDays(t, -10), status: 'collecting virgins', owner: 'Myrto',
+      notes: 'GCaMP imaging cross - collecting virgins now',
+      targetCount: 20, collected: [], vials: [],
+      virginsCollected: 5, overnightAt18: true,
+      vcs: { enabled: true, overnightAt18: true, collectionsPerDay: 2,
+        schedule: { ...VCS_DEFAULTS['18_2'] },
+        lastClearTime: new Date(new Date().setHours(17, 30, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '18', virginDeadline: null,
+        todayActions: [{ type: 'collect', key: 'morning', time: new Date(new Date().setHours(9, 30, 0, 0)).toISOString() }],
+        createdAt: addDays(t, -1) },
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: '2p', experimentDate: addDays(t, 5),
+      retinalStartDate: '' },
+    // c10: collecting virgins, opto, 25inc, Seba, partial (3 of 5)
+    //      UAS-CsChrimson (s4) x TH-GAL4 (s14)
+    { id: 'c10', parentA: 's4', parentB: 's14', temperature: '25inc',
+      setupDate: addDays(t, -10), status: 'collecting virgins', owner: 'Seba',
+      notes: 'CsChrimson x TH - partially collected virgins',
+      targetCount: 20, collected: [], vials: [],
+      virginsCollected: 3, overnightAt18: false,
+      vcs: { enabled: true, overnightAt18: false, collectionsPerDay: 2,
+        schedule: { ...VCS_DEFAULTS['25_2'] },
+        lastClearTime: new Date(new Date().setHours(18, 0, 0, 0) - 86400000).toISOString(),
+        lastClearTemp: '25', virginDeadline: null,
+        todayActions: [],
+        createdAt: addDays(t, -1) },
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'optogenetics', experimentDate: addDays(t, 8),
+      retinalStartDate: addDays(t, -5) },
+    // c16: collecting virgins, flydisco, 25room, Catherine, just started (0 of 5)
+    //      VT30559-GAL4 (s20) x UAS-CsChrimson (s4)
+    { id: 'c16', parentA: 's20', parentB: 's4', temperature: '25room',
+      setupDate: addDays(t, -10), status: 'collecting virgins', owner: 'Catherine',
+      notes: 'FlyDisco arena cross - just started collecting',
+      targetCount: 20, collected: [], vials: [],
+      virginsCollected: 0, overnightAt18: true,
+      vcs: { enabled: true, overnightAt18: true, collectionsPerDay: 3,
+        schedule: { ...VCS_DEFAULTS['18_3'] },
+        lastClearTime: null, lastClearTemp: '18', virginDeadline: null,
+        todayActions: [],
+        createdAt: addDays(t, -1) },
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'flydisco', experimentDate: addDays(t, 12),
+      retinalStartDate: '' },
+
+    // ── STATUS: 'waiting for progeny' (2) ──────────────────────────────
+    // c4: waiting for progeny, no experiment type, 25inc, Catherine
+    //     GMR-GAL4 (s12) x UAS-mCD8::GFP (s13) - skip-ripening (no opto/calc)
+    { id: 'c4', parentA: 's12', parentB: 's13', temperature: '25inc',
+      setupDate: addDays(t, -14), status: 'waiting for progeny', owner: 'Catherine',
+      waitStartDate: addDays(t, -4),
+      notes: 'Eye expression test - waiting for progeny to emerge (will skip ripening)',
+      targetCount: 40, collected: [], vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: '', experimentDate: '', retinalStartDate: '' },
+    // c11: waiting for progeny, 2p, 18C, Flo, slow timeline
+    //      UAS-jGCaMP7f (s8) x UAS-CsChrimson (s4) - dual opto+calc
+    { id: 'c11', parentA: 's8', parentB: 's4', temperature: '18',
+      setupDate: addDays(t, -22), status: 'waiting for progeny', owner: 'Flo',
+      waitStartDate: addDays(t, -3),
+      notes: 'GCaMP x CsChrimson at 18C - slow progeny timeline',
+      targetCount: 25, collected: [], vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: '2p', experimentDate: addDays(t, 14),
+      retinalStartDate: '' },
+
+    // ── STATUS: 'collecting progeny' (2) ───────────────────────────────
+    // c5: collecting progeny, 2p, 25inc, Flo, with collected + vials
+    //     elav-GAL4 (s11) x UAS-jGCaMP7f (s8)
+    { id: 'c5', parentA: 's11', parentB: 's8', temperature: '25inc',
+      setupDate: addDays(t, -18), status: 'collecting progeny', owner: 'Flo',
+      waitStartDate: addDays(t, -9),
+      notes: 'Neuronal GCaMP cross - collecting progeny now',
+      targetCount: 50,
+      collected: [
+        { date: addDays(t, -3), count: 8 },
+        { date: addDays(t, -2), count: 12 },
+        { date: addDays(t, -1), count: 6 }
+      ],
+      vials: [
+        { id: 'v1', setupDate: addDays(t, -16), notes: 'Re-vial 1' },
+        { id: 'v2', setupDate: addDays(t, -13), notes: 'Re-vial 2' }
+      ],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: '2p', experimentDate: addDays(t, 3),
+      retinalStartDate: '' },
+    // c15: collecting progeny, behavior (no opto/calc → will skip ripening), 25room, Shahar
+    //      Canton-S (s3) x w1118 (s2) - control cross, recently started collecting
+    { id: 'c15', parentA: 's3', parentB: 's2', temperature: '25room',
+      setupDate: addDays(t, -16), status: 'collecting progeny', owner: 'Shahar',
+      waitStartDate: addDays(t, -7),
+      notes: 'Wild type control for behaviour - no opto/calc, will skip ripening',
+      targetCount: 30,
+      collected: [
+        { date: addDays(t, -1), count: 5 },
+        { date: addDays(t, 0), count: 7 }
+      ],
+      vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'behavior', experimentDate: addDays(t, 5),
+      retinalStartDate: '' },
+
+    // ── STATUS: 'ripening' (3) - opto 3d, imaging 5d, and dual ────────
+    // c6: ripening, opto (CsChrimson → 3d), 25inc, Tomke
+    //     TH-GAL4 (s14) x MB298B > CsChrimson (s6), 2d in → 1d remaining
+    { id: 'c6', parentA: 's14', parentB: 's6', temperature: '25inc',
+      setupDate: addDays(t, -22), status: 'ripening', owner: 'Tomke',
+      waitStartDate: addDays(t, -12),
+      ripeningStartDate: addDays(t, -2),
+      notes: 'TH > CsChrimson - ripening before opto experiment (3d retinal)',
+      targetCount: 30,
+      collected: [
+        { date: addDays(t, -5), count: 10 },
+        { date: addDays(t, -4), count: 9 },
+        { date: addDays(t, -3), count: 11 }
+      ],
+      vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'optogenetics', experimentDate: addDays(t, 2),
+      retinalStartDate: addDays(t, -8) },
+    // c13: ripening, opto (ReaChR → 3d), 25inc, Shahar, exactly at 3d → ready
+    //      UAS-ReaChR (s17) x nSyb-GAL4 (s16)
+    { id: 'c13', parentA: 's17', parentB: 's16', temperature: '25inc',
+      setupDate: addDays(t, -24), status: 'ripening', owner: 'Shahar',
+      waitStartDate: addDays(t, -14),
+      ripeningStartDate: addDays(t, -3),
+      notes: 'nSyb > ReaChR - ripening complete, ready to screen',
+      targetCount: 25,
+      collected: [
+        { date: addDays(t, -7), count: 8 },
+        { date: addDays(t, -6), count: 10 },
+        { date: addDays(t, -5), count: 7 }
+      ],
+      vials: [{ id: 'v4', setupDate: addDays(t, -22), notes: 'Re-vial 1' }],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'optogenetics', experimentDate: addDays(t, 1),
+      retinalStartDate: addDays(t, -10) },
+    // c14: ripening, imaging (GCaMP → 5d), 18C, Myrto, 2d in → 3d remaining
+    //      UAS-GCaMP6s (s19) x elav-GAL4 (s11)
+    { id: 'c14', parentA: 's19', parentB: 's11', temperature: '18',
+      setupDate: addDays(t, -30), status: 'ripening', owner: 'Myrto',
+      waitStartDate: addDays(t, -10),
+      ripeningStartDate: addDays(t, -2),
+      notes: 'GCaMP6s pan-neuronal - ripening for GCaMP expression (5d)',
+      targetCount: 15,
+      collected: [
+        { date: addDays(t, -4), count: 5 },
+        { date: addDays(t, -3), count: 4 },
+        { date: addDays(t, -2), count: 6 }
+      ],
+      vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: '2p', experimentDate: addDays(t, 5),
+      retinalStartDate: '' },
+
+    // ── STATUS: 'screening' (2) ────────────────────────────────────────
+    // c7: screening, opto, 25inc, Bella
+    //     UAS-GtACR1 (s7) x nSyb-GAL4 (s16) - GtACR inhibition
+    { id: 'c7', parentA: 's7', parentB: 's16', temperature: '25inc',
+      setupDate: addDays(t, -25), status: 'screening', owner: 'Bella',
+      waitStartDate: addDays(t, -15),
+      notes: 'nSyb > GtACR1 silencing - screening for correct genotype',
+      targetCount: 30,
+      collected: [
+        { date: addDays(t, -6), count: 10 },
+        { date: addDays(t, -5), count: 8 },
+        { date: addDays(t, -4), count: 7 }
+      ],
+      vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'optogenetics', experimentDate: addDays(t, 1),
+      retinalStartDate: addDays(t, -10) },
+    // c17: screening, flydisco (no opto/calc), 25room, Tomke
+    //      fruP1-GAL4 (s23) x MB247-DsRed (s15), sequential cross from c8
+    { id: 'c17', parentA: 's23', parentB: 's15', temperature: '25room',
+      setupDate: addDays(t, -28), status: 'screening', owner: 'Tomke',
+      waitStartDate: addDays(t, -18),
+      notes: 'F1 courtship screen from initial cross - screening DsRed+ / GAL4+',
+      targetCount: 20,
+      collected: [
+        { date: addDays(t, -9), count: 7 },
+        { date: addDays(t, -8), count: 6 },
+        { date: addDays(t, -7), count: 7 }
+      ],
+      vials: [{ id: 'v5', setupDate: addDays(t, -26), notes: 'Re-vial 1' }],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'sequential', parentCrossId: 'c8',
+      experimentType: 'flydisco', experimentDate: addDays(t, 3),
+      retinalStartDate: '' },
+
+    // ── STATUS: 'done' (4) ─────────────────────────────────────────────
+    // c8: done, behavior, 25inc, Bella, control cross
+    //     Canton-S (s3) x Oregon-R (s1)
+    { id: 'c8', parentA: 's3', parentB: 's1', temperature: '25inc',
+      setupDate: addDays(t, -35), status: 'done', owner: 'Bella',
+      waitStartDate: addDays(t, -25),
+      notes: 'Control cross for behaviour - completed',
+      targetCount: 50,
+      collected: [
+        { date: addDays(t, -20), count: 15 },
+        { date: addDays(t, -19), count: 20 },
+        { date: addDays(t, -18), count: 15 }
+      ],
+      vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'behavior', experimentDate: addDays(t, -15),
+      retinalStartDate: '' },
+    // c12: done, 2p, 25room, Catherine, with re-vial
+    //      UAS-RCaMP (s10) x elav-GAL4 (s11)
+    { id: 'c12', parentA: 's10', parentB: 's11', temperature: '25room',
+      setupDate: addDays(t, -40), status: 'done', owner: 'Catherine',
+      waitStartDate: addDays(t, -30),
+      notes: 'RCaMP pan-neuronal imaging - completed',
+      targetCount: 35,
+      collected: [
+        { date: addDays(t, -25), count: 12 },
+        { date: addDays(t, -24), count: 14 },
+        { date: addDays(t, -23), count: 9 }
+      ],
+      vials: [{ id: 'v3', setupDate: addDays(t, -38), notes: 'Re-vial 1' }],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: '2p', experimentDate: addDays(t, -20),
+      retinalStartDate: '' },
+    // c18: done, vr, 25inc, Seba, completed VR experiment
+    //      UAS-Chrimson (s18) x elav-GAL4 (s11)
+    { id: 'c18', parentA: 's18', parentB: 's11', temperature: '25inc',
+      setupDate: addDays(t, -32), status: 'done', owner: 'Seba',
+      waitStartDate: addDays(t, -22),
+      notes: 'Chrimson pan-neuronal for VR closed-loop - completed',
+      targetCount: 15,
+      collected: [
+        { date: addDays(t, -15), count: 5 },
+        { date: addDays(t, -14), count: 6 },
+        { date: addDays(t, -13), count: 4 }
+      ],
+      vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'vr', experimentDate: addDays(t, -10),
+      retinalStartDate: addDays(t, -18) },
+    // c19: done, other, 18C, Catherine, completed custom experiment (sequential)
+    //      UAS-mCD8::GFP (s13) x GMR-GAL4 (s12)
+    { id: 'c19', parentA: 's13', parentB: 's12', temperature: '18',
+      setupDate: addDays(t, -50), status: 'done', owner: 'Catherine',
+      waitStartDate: addDays(t, -35),
+      notes: 'F1 balanced cross for eye-specific GFP - completed',
+      targetCount: 20,
+      collected: [
+        { date: addDays(t, -28), count: 8 },
+        { date: addDays(t, -27), count: 7 },
+        { date: addDays(t, -26), count: 5 }
+      ],
+      vials: [{ id: 'v6', setupDate: addDays(t, -48), notes: 'Re-vial 1' }],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'sequential', parentCrossId: '',
+      experimentType: 'other', experimentDate: addDays(t, -22),
+      retinalStartDate: '' },
+
+    // ── ADDITIONAL CROSSES for coverage gaps ────────────────────────────
+    // c20: waiting for progeny, behavior (no opto/calc), RT, Shahar
+    //      Berlin-K (s25) x Canton-S (s3) - wild type cross at RT
+    { id: 'c20', parentA: 's25', parentB: 's3', temperature: 'RT',
+      setupDate: addDays(t, -12), status: 'waiting for progeny', owner: 'Shahar',
+      waitStartDate: addDays(t, -2),
+      notes: 'Wild type cross at RT - slow development, no opto/calc',
+      targetCount: 20, collected: [], vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType: 'behavior', experimentDate: addDays(t, 18),
+      retinalStartDate: '' },
+  ];
+
+  // ════════════════════════════════════════════════════════════════════
+  // VIRGIN BANK - entries for various stocks
+  // ════════════════════════════════════════════════════════════════════
+  const virginBank = {
+    's4': 8,   // UAS-CsChrimson - enough banked virgins to auto-skip collecting
+    's5': 3,   // R58E02 CsChrimson split - partial bank
+    's11': 12, // elav-GAL4 - well stocked
+    's9': 5,   // MBON GCaMP - moderate bank
+    's8': 2,   // UAS-jGCaMP7f - very low bank
+    's17': 6,  // UAS-ReaChR - decent bank
+    's3': 4,   // Canton-S - some virgins
+    's14': 1,  // TH-GAL4 - minimal bank
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  // EXP BANK - experimental animals collected from crosses/stocks
+  // ════════════════════════════════════════════════════════════════════
+  const expBank = {
+    'c5': { m: 8, f: 12, source: 'cross' },   // elav-GAL4 x UAS-jGCaMP7f - collecting progeny
+    'c15': { m: 3, f: 5, source: 'cross' },    // Canton-S x w1118 - collecting progeny
+    's3': { m: 2, f: 4, source: 'stock' },      // Canton-S - direct from stock
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  // TRANSFERS - pending requests between users
+  // Types: stock (maintainership), cross (ownership), collection (all stocks in cat)
+  // ════════════════════════════════════════════════════════════════════
+  const transfers = [
+    // Flo wants to transfer s16 (nSyb-GAL4, unclaimed) maintainership to Tomke
+    { id: 'tx1', from: 'Flo', to: 'Tomke', type: 'stock', itemId: 's16',
+      name: 'nSyb-GAL4', status: 'pending', createdAt: addDays(t, -1) },
+    // Seba wants to transfer cross c10 ownership to Catherine
+    { id: 'tx2', from: 'Seba', to: 'Catherine', type: 'cross', itemId: 'c10',
+      name: 'UAS-CsChrimson x TH-GAL4 (VDRC)', status: 'pending', createdAt: addDays(t, -2) },
+    // Shahar wants to transfer "Opto Tools" collection to Bella
+    { id: 'tx3', from: 'Shahar', to: 'Bella', type: 'collection', collection: 'Opto Tools',
+      name: 'Opto Tools', status: 'pending', createdAt: addDays(t, 0) },
+    // Myrto accepted Bella's stock transfer (resolved, for testing sentTransfers banner)
+    { id: 'tx4', from: 'Bella', to: 'Myrto', type: 'stock', itemId: 's10',
+      name: 'UAS-RCaMP1.07', status: 'accepted', createdAt: addDays(t, -3) },
+    // Catherine declined Flo's collection transfer (resolved)
+    { id: 'tx5', from: 'Flo', to: 'Catherine', type: 'collection', collection: 'Flo Stocks 1',
+      name: 'Flo Stocks 1', status: 'declined', createdAt: addDays(t, -4) },
+  ];
+
+  // Derive collections from stock categories
+  stocks.forEach(s => s.demo = true);
+  crosses.forEach(c => c.demo = true);
+  const cats = [...new Set(stocks.map(s => s.category).filter(Boolean))];
+  const collections = [...cats.filter(c => c !== 'No Collection'), 'No Collection'];
+
+  return { stocks, crosses, virginBank, expBank, transfers, collections };
+}
+
+/* ========== PIN LOCK ========== */
+async function hashPin(pin) {
+  const data = new TextEncoder().encode(pin + 'flo-salt');
+  const buf = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function PinLock({ onUnlock, user, onSelectUser, onPinSet }) {
+  const [mode, setMode] = useState(() => {
+    if (!user) return 'select';
+    if (!localStorage.getItem(`flo-pin-${user}`)) return 'setup';
+    return 'enter';
+  });
+  const [pin, setPin] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [shaking, setShaking] = useState(false);
+
+  function shake() { setShaking(true); setTimeout(() => setShaking(false), 500); }
+
+  useEffect(() => {
+    if (mode === 'select') return;
+    function onKeyDown(e) {
+      if (e.key >= '0' && e.key <= '9') handleKey(e.key);
+      else if (e.key === 'Backspace') handleDel();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
+
+  function handleKey(n) {
+    if (mode === 'setup') {
+      if (confirm.length > 0 || pin.length === 4) {
+        const next = confirm + n;
+        setConfirm(next);
+        if (next.length === 4) {
+          if (next === pin) { hashPin(pin).then(h => { localStorage.setItem(`flo-pin-${user}`, h); if (onPinSet) onPinSet(); onUnlock(); }); }
+          else { setError("PINs didn't match"); shake(); setPin(''); setConfirm(''); }
+        }
+      } else {
+        const next = pin + n;
+        setPin(next);
+        if (next.length === 4) { setConfirm(''); setError(''); }
+      }
+    } else {
+      const next = pin + n;
+      setPin(next);
+      if (next.length === 4) {
+        hashPin(next).then(h => {
+          if (h === localStorage.getItem(`flo-pin-${user}`)) onUnlock();
+          else { setError('Wrong PIN'); shake(); setPin(''); }
+        });
+      }
+    }
+  }
+  function handleDel() {
+    if (mode === 'setup' && pin.length === 4) setConfirm(confirm.slice(0, -1));
+    else setPin(pin.slice(0, -1));
+    setError('');
+  }
+
+  function pickUser(u) {
+    onSelectUser(u);
+    if (localStorage.getItem(`flo-pin-${u}`)) setMode('enter');
+    else setMode('setup');
+    setPin(''); setConfirm(''); setError('');
+  }
+
+  const current = mode === 'setup' && pin.length === 4 ? confirm : pin;
+  const label = mode === 'select' ? 'Who are you?'
+    : mode === 'setup' ? (pin.length < 4 ? `${user}, set a 4-digit PIN` : 'Confirm your PIN')
+    : `Welcome back, ${user}`;
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-6" style={{ background: 'var(--bg)' }}>
+      <div className="mb-10 text-center">
+        <div className="w-12 h-12 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{ background: 'var(--accent-glow)', border: '1px solid rgba(139,92,246,0.2)' }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </div>
+        <h1 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-1)' }}>Flomington</h1>
+        <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>fly stock manager</p>
+      </div>
+      <p className="text-sm mb-6" style={{ color: 'var(--text-2)' }}>{label}</p>
+      {mode === 'select' ? (
+        <div className="grid grid-cols-2 gap-3 w-72">
+          {USERS.map(u => (
+            <button key={u} onClick={() => pickUser(u)}
+              className="px-4 py-4 text-sm font-semibold rounded-xl transition-all active:scale-95"
+              style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>
+              {u}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className={`flex gap-5 mb-4 ${shaking ? 'shake' : ''}`}>
+            {[0, 1, 2, 3].map(i => <div key={i} className={`pin-dot ${i < current.length ? 'filled' : ''}`} />)}
+          </div>
+          {error && <p className="text-xs text-red-400 mb-4 font-medium">{error}</p>}
+          <div className="grid grid-cols-3 gap-3 mt-6" style={{ maxWidth: 260 }}>
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
+              <button key={n} onClick={() => handleKey(String(n))}
+                className="touch w-20 h-14 rounded-2xl text-lg font-semibold transition-all active:scale-95"
+                style={{ color: 'var(--text-1)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                {n}
+              </button>
+            ))}
+            <button onClick={handleDel}
+              className="touch w-20 h-14 rounded-2xl text-sm transition-all active:scale-95"
+              style={{ color: 'var(--text-3)', background: 'var(--surface)' }}>Del</button>
+            <button onClick={() => handleKey('0')}
+              className="touch w-20 h-14 rounded-2xl text-lg font-semibold transition-all active:scale-95"
+              style={{ color: 'var(--text-1)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>0</button>
+          </div>
+          {(mode === 'setup' || mode === 'enter') && (
+            <button onClick={() => { setMode('select'); setPin(''); setConfirm(''); setError(''); }}
+              className="text-xs mt-8 touch" style={{ color: 'var(--text-3)' }}>Not {user}? Switch user</button>
+          )}
+          {mode === 'setup' && <p className="text-[10px] mt-4 max-w-xs text-center" style={{ color: 'var(--text-3)' }}>Your PIN is personal - only you need it to switch back.</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ========== TOAST SYSTEM ========== */
+function Toasts({ items, remove }) {
+  return (
+    <div className="fixed bottom-28 left-0 right-0 z-[100] flex flex-col items-center gap-2 px-4 pointer-events-none">
+      {items.map(t => (
+        <div key={t.id} className={`pointer-events-auto px-4 py-3 flex items-center gap-3 max-w-sm w-full rounded-2xl ${t.out ? 'anim-out' : 'anim-in'}`}
+          style={{ background: 'rgba(24,24,27,0.9)', backdropFilter: 'blur(20px)', border: '1px solid var(--border)', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}>
+          <span className="text-sm flex-1" style={{ color: 'var(--text-1)' }}>{t.msg}</span>
+          {t.undo && <button onClick={() => { t.undo(); remove(t.id); }} className="text-sm font-bold touch" style={{ color: 'var(--accent-2)' }}>Undo</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+function useToast() {
+  const [items, set] = useState([]);
+  const add = useCallback((msg, undo) => {
+    const id = uid();
+    set(p => [...p, { id, msg, undo }]);
+    setTimeout(() => set(p => p.map(t => t.id === id ? { ...t, out: true } : t)), 3500);
+    setTimeout(() => set(p => p.filter(t => t.id !== id)), 3900);
+  }, []);
+  const rm = useCallback(id => {
+    set(p => p.map(t => t.id === id ? { ...t, out: true } : t));
+    setTimeout(() => set(p => p.filter(t => t.id !== id)), 300);
+  }, []);
+  return { items, add, rm };
+}
+
+/* ========== UI COMPONENTS ========== */
+function Modal({ open, onClose, title, children, wide }) {
+  if (!open) return null;
+
+  useEffect(() => {
+    const handleEsc = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-5" onClick={onClose}>
+      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', animation: 'backdrop-in 0.2s ease' }} />
+      <div className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[75vh] overflow-y-auto`}
+        style={{
+          borderRadius: '28px',
+          padding: '2.5rem',
+          backgroundColor: 'rgba(15, 12, 41, 0.3)',
+          backgroundImage: 'linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(0,128,128,0.04) 30%, rgba(138,154,91,0.04) 60%, rgba(255,255,255,0.06) 100%)',
+          backdropFilter: 'blur(40px) saturate(1.6) brightness(1.1)',
+          WebkitBackdropFilter: 'blur(40px) saturate(1.6) brightness(1.1)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          boxShadow: '0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 0 rgba(255,255,255,0.1) inset, 0 -1px 0 0 rgba(255,255,255,0.02) inset, 0 8px 40px rgba(0,0,0,0.35), 0 0 120px rgba(0,128,128,0.06), 0 0 60px rgba(204,119,34,0.04)',
+          animation: 'modal-in 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+        onClick={e => e.stopPropagation()}>
+        {title && (
+          <div className="flex items-center justify-between mb-5">
+            <h3 className="text-base font-bold" style={{ color: 'var(--text-1)' }}>{title}</h3>
+            <button onClick={onClose} className="touch rounded-full w-10 h-10 flex items-center justify-center transition-all active:scale-90 hover:opacity-80" style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' }}>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg>
+            </button>
+          </div>
+        )}
+        <div>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Confirm({ open, onOk, onNo, title, msg, okLabel = 'Delete' }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={onNo}>
+      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }} />
+      <div className="relative card p-6 max-w-sm w-full anim-in" onClick={e => e.stopPropagation()}>
+        <p className="text-sm font-bold mb-2" style={{ color: 'var(--text-1)' }}>{title}</p>
+        <p className="text-xs mb-5" style={{ color: 'var(--text-3)' }}>{msg}</p>
+        <div className="flex gap-2">
+          <button onClick={onOk} className="touch flex-1 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-95"
+            style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>{okLabel}</button>
+          <button onClick={onNo} className="touch flex-1 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-95"
+            style={{ background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Btn({ children, onClick, v = 'p', className = '', disabled, ...props }) {
+  const styles = {
+    p: { background: 'linear-gradient(135deg, #7c3aed, #8b5cf6)', color: '#fff', border: 'none', boxShadow: '0 4px 16px var(--accent-glow)' },
+    s: { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' },
+    d: { background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.12)' },
+    g: { background: 'transparent', color: 'var(--text-3)', border: 'none' },
+    ok: { background: 'linear-gradient(135deg, #059669, #10b981)', color: '#fff', border: 'none', boxShadow: '0 4px 16px rgba(34,197,94,0.2)' },
+    advance: { background: 'linear-gradient(135deg, #7c3aed, #6d28d9)', color: '#fff', border: 'none', boxShadow: '0 4px 16px var(--accent-glow)' },
+  };
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className={`touch px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-[0.97] ${disabled ? 'opacity-30 pointer-events-none' : ''} ${className}`}
+      style={styles[v] || styles.p} {...props}>
+      {children}
+    </button>
+  );
+}
+
+function Inp(props) {
+  return <input {...props} className={`w-full px-4 py-3 text-sm rounded-xl ${props.className || ''}`} />;
+}
+function Txt(props) {
+  return <textarea {...props} className={`w-full px-4 py-3 text-sm rounded-xl resize-y ${props.className || ''}`} />;
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="block mb-4">
+      <span className="text-[11px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-3)' }}>{label}</span>
+      <div className="mt-1.5">{children}</div>
+    </label>
+  );
+}
+
+/* ========== TIMELINE VISUALIZATION ========== */
+function CrossTimeline({ cross }) {
+  const si = stIdx(cross.status);
+  const positions = STATUSES.map((_, i) => (i / (STATUSES.length - 1)) * 100);
+  const fillPct = positions[si];
+
+  return (
+    <div className="py-3 px-1">
+      <div className="tl-track">
+        <div className="tl-fill" style={{ width: `${fillPct}%` }} />
+        {STATUSES.map((st, i) => {
+          let cls = 'tl-dot ';
+          if (i < si) cls += 'tl-dot-done';
+          else if (i === si) cls += 'tl-dot-current pulse-dot';
+          else cls += 'tl-dot-future';
+          return <div key={i} className={cls} style={{ left: `${positions[i]}%` }} />;
+        })}
+      </div>
+      <div className="relative mt-3" style={{ height: '14px' }}>
+        {STATUS_SHORT.map((lbl, i) => (
+          <span key={i} className="tl-label"
+            style={{
+              position: 'absolute',
+              left: `${positions[i]}%`,
+              transform: 'translateX(-50%)',
+              color: i < si ? 'rgba(34,197,94,0.5)' : i === si ? 'var(--accent-2)' : 'var(--text-3)',
+              fontWeight: i === si ? 700 : 600,
+            }}>
+            {lbl}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ========== NEXT ACTION HELPER ========== */
+function getNextAction(cross, stocks) {
+  const tl = getTL(cross);
+  const cd = crossDetect(cross, stocks);
+
+  if (cross.status === 'done') return null;
+
+  switch (cross.status) {
+    case 'set up':
+      return { text: 'Cross set up - advance when ready', urgent: false };
+    case 'waiting for virgins': {
+      const waited = -dFromNow(cross.setupDate);
+      const remaining = 9 - waited;
+      if (remaining <= 0) return { text: 'Virgins eclosing - collect now!', urgent: true };
+      if (remaining === 1) return { text: 'Virgins eclose tomorrow', urgent: false };
+      return { text: `Waiting for virgins - ${remaining}d remaining`, urgent: false };
+    }
+    case 'collecting virgins':
+      return { text: 'Collecting virgins - set up cross when ready', urgent: false };
+    case 'waiting for progeny': {
+      const waitStart = cross.waitStartDate;
+      if (waitStart) {
+        const waited = -dFromNow(waitStart);
+        const remaining = 9 - waited;
+        if (remaining <= 0) return { text: 'Progeny ready - collect now!', urgent: true };
+        return { text: `Waiting for progeny - ${remaining}d remaining`, urgent: false };
+      }
+      return { text: 'Waiting for progeny', urgent: false };
+    }
+    case 'collecting progeny':
+      return { text: 'Collecting progeny', urgent: false };
+    case 'ripening': {
+      const rStart = cross.ripeningStartDate;
+      if (rStart) {
+        const days = -dFromNow(rStart);
+        const target = cd.o ? 3 : 5; // retinal needs 3d, GCaMP needs 5d expression
+        const remaining = target - days;
+        if (remaining <= 0) return { text: `Ripening complete - ready for experiment`, urgent: true };
+        return { text: `Ripening - ${remaining}d remaining (${cd.o ? 'retinal uptake' : 'GCaMP expression'})`, urgent: false };
+      }
+      return { text: cd.o ? 'Ripening - retinal uptake (3d)' : 'Ripening - GCaMP expression (5d)', urgent: false };
+    }
+    case 'screening':
+      return { text: 'Screen and score', urgent: false };
+    default:
+      return null;
+  }
+}
+
+/* ========== CIRCULAR PROGRESS ========== */
+function CircleProgress({ value, max, size = 40, stroke = 3, countUp }) {
+  const pct = max > 0 ? Math.min(1, value / max) : 0;
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const done = pct >= 1;
+  return (
+    <svg width={size} height={size} className="shrink-0">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={stroke} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none"
+        stroke={done ? '#22c55e' : '#8b5cf6'} strokeWidth={stroke}
+        strokeDasharray={circ} strokeDashoffset={circ * (1 - pct)}
+        strokeLinecap="round" transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        style={{ transition: 'stroke-dashoffset 0.5s ease' }} />
+      <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central"
+        fill={done ? '#86efac' : 'var(--text-3)'} fontSize="9" fontWeight="700" fontFamily="'SF Mono', monospace">
+        {done ? '✓' : countUp ? value : Math.max(0, max - value)}
+      </text>
+    </svg>
+  );
+}
+
+/* ========== CROSS CARD (COMPACT) ========== */
+function CrossCard({ cross, stocks, setCrosses, toast, virginBank, setVirginBank, virginsPerCross, forceOpen, currentUser, onTransfer, printListCrosses, setPrintListCrosses, expBank, setExpBank }) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  useEffect(() => { if (forceOpen) setDetailOpen(true); }, [forceOpen]);
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const tl = getTL(cross);
+  const cd = crossDetect(cross, stocks);
+  const tot = (cross.collected || []).reduce((s, e) => s + e.count, 0);
+  const isVirginPhase = ['waiting for virgins', 'collecting virgins'].includes(cross.status);
+  const vTarget = virginsPerCross || 5;
+  const vCollected = cross.virginsCollected || 0;
+  const hasTarget = isVirginPhase ? vTarget > 0 : cross.targetCount > 0;
+  const isCollecting = ['waiting for virgins', 'collecting virgins', 'waiting for progeny', 'collecting progeny', 'screening'].includes(cross.status);
+  const nextAction = getNextAction(cross, stocks);
+  const isDone = cross.status === 'done';
+
+  function advance(e) {
+    e?.stopPropagation();
+    let ns = nextSt(cross.status);
+    // Skip ripening for crosses without opto/imaging
+    if (ns === 'ripening' && !cd.o && !cd.c) ns = nextSt(ns);
+    // Auto-skip "collecting virgins" if enough virgins are banked for the virgin parent
+    if (ns === 'collecting virgins' && virginBank && setVirginBank) {
+      const needed = virginsPerCross || 5;
+      const available = virginBank[cross.parentA] || 0;
+      if (available >= needed) {
+        setVirginBank(prev => ({ ...prev, [cross.parentA]: (prev[cross.parentA] || 0) - needed }));
+        ns = 'collecting progeny';
+        toast.add(`Used ${needed} banked virgins → ${ns}`);
+        markEdited(cross.id);
+        setCrosses(p => p.map(c => c.id === cross.id ? { ...c, status: ns } : c));
+        return;
+      }
+    }
+    markEdited(cross.id);
+    const extra = ns === 'waiting for progeny' ? { waitStartDate: today(), vcs: null }
+      : ns === 'ripening' ? { ripeningStartDate: today() }
+      : ns === 'collecting virgins' ? { vcs: makeVcs(cross.overnightAt18 !== false, 2, VCS_DEFAULTS[vcsKey(cross.overnightAt18 !== false, 2)]) }
+      : {};
+    setCrosses(p => p.map(c => c.id === cross.id ? { ...c, status: ns, ...extra } : c));
+    toast.add(`→ ${ns}`);
+  }
+
+  function quickLog(n) {
+    markEdited(cross.id);
+    setCrosses(p => p.map(c => c.id !== cross.id ? c : { ...c, collected: [...(c.collected || []), { date: today(), count: n }] }));
+    toast.add(`+${n} logged`);
+  }
+
+  function logVirgin(n) {
+    markEdited(cross.id);
+    const newCount = vCollected + n;
+    if (newCount >= vTarget) {
+      setCrosses(p => p.map(c => c.id === cross.id ? { ...c, virginsCollected: newCount, status: 'waiting for progeny', waitStartDate: today(), vcs: null } : c));
+      toast.add(`${vTarget} virgins collected → waiting for progeny`);
+    } else {
+      setCrosses(p => p.map(c => c.id === cross.id ? { ...c, virginsCollected: newCount } : c));
+      toast.add(`+${n} virgin${n > 1 ? 's' : ''}`);
+    }
+  }
+
+  function revial() {
+    const clone = {
+      ...cross,
+      id: uid(),
+      setupDate: today(),
+      status: 'waiting for progeny',
+      waitStartDate: today(),
+      collected: [],
+      vials: [],
+      vcs: null,
+      notes: `Re-vial of ${cl(cross, stocks)}`,
+    };
+    markEdited(clone.id);
+    setCrosses(p => [...p, clone]);
+    toast.add('Re-vialed - new cross created');
+  }
+
+  function exportCal() {
+    const lb = cl(cross, stocks);
+    const ev = [
+      { date: tl.virginStart, title: `Virgins start: ${lb}`, desc: 'Start collecting virgins' },
+      { date: tl.virginEnd, title: `Virgins end: ${lb}`, desc: 'Last day for virgins' },
+      { date: tl.progenyStart, title: `Progeny start: ${lb}`, desc: 'Start collecting progeny' },
+      { date: tl.progenyEnd, title: `Progeny end: ${lb}`, desc: 'Last day for progeny' },
+    ];
+    if (cross.experimentDate) ev.push({ date: cross.experimentDate, title: `Experiment: ${lb}`, desc: cross.experimentType || '' });
+    dlICS(ev, `cross-${cross.id.slice(0, 6)}.ics`);
+    toast.add('Calendar exported');
+  }
+
+  function doDelete() {
+    const backup = { ...cross };
+    markDeleted(cross.id);
+    supabaseDeleteNow('crosses', cross.id);
+    setCrosses(p => p.filter(c => c.id !== cross.id));
+    setDeleting(false);
+    setDetailOpen(false);
+    toast.add('Cross deleted', () => { _deletedIds.delete(backup.id); setCrosses(p => [...p, backup]); });
+  }
+
+  function setStatus(st) {
+    markEdited(cross.id);
+    const extra = st === 'waiting for progeny' ? { waitStartDate: today(), vcs: null }
+      : st === 'collecting virgins' && !cross.vcs ? { vcs: makeVcs(cross.overnightAt18 !== false, 2, VCS_DEFAULTS[vcsKey(cross.overnightAt18 !== false, 2)]) }
+      : {};
+    setCrosses(p => p.map(c => c.id === cross.id ? { ...c, status: st, ...extra } : c));
+    toast.add(`Set to: ${st}`);
+  }
+
+  /* --- Compact card (tap to open detail) --- */
+  return (
+    <>
+      <div className={`card anim-in cursor-pointer transition-all active:scale-[0.98] ${isDone ? 'opacity-50' : ''}`}
+        style={['collecting virgins', 'collecting progeny', 'ripening'].includes(cross.status)
+          ? { borderColor: 'rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.06)', boxShadow: '0 0 20px rgba(239,68,68,0.08)' }
+          : (cross.status === 'waiting for virgins' && -dFromNow(cross.setupDate) >= 7) || (cross.status === 'waiting for progeny' && cross.waitStartDate && -dFromNow(cross.waitStartDate) >= 7)
+            ? { borderColor: 'rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.06)', boxShadow: '0 0 20px rgba(245,158,11,0.08)' }
+            : {}}
+        onClick={() => setDetailOpen(true)}>
+        <div className="p-4 flex items-center gap-4">
+          {/* Circular progress - hide during waiting statuses */}
+          {hasTarget && !['waiting for virgins', 'waiting for progeny'].includes(cross.status) ? (
+            <CircleProgress value={isVirginPhase ? vCollected : tot} max={isVirginPhase ? vTarget : cross.targetCount} countUp={['collecting virgins', 'collecting progeny'].includes(cross.status)} />
+          ) : (
+            <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: isDone ? 'rgba(34,197,94,0.1)' : 'var(--accent-glow-2)', border: `1px solid ${isDone ? 'rgba(34,197,94,0.15)' : 'rgba(139,92,246,0.15)'}` }}>
+              <span className="text-xs font-bold" style={{ color: isDone ? '#86efac' : 'var(--accent-2)' }}>
+                {isDone ? '✓'
+                  : cross.status === 'waiting for progeny' && cross.waitStartDate ? Math.max(0, 9 - (-dFromNow(cross.waitStartDate))) + 'd'
+                  : cross.status === 'waiting for virgins' ? Math.max(0, 9 - (-dFromNow(cross.setupDate))) + 'd'
+                  : STATUS_SHORT[stIdx(cross.status)]}
+              </span>
+            </div>
+          )}
+
+          {/* Names + info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <div className="text-[14px] font-bold leading-snug truncate" style={{ color: 'var(--text-1)' }}>
+                <span style={{ color: '#f9a8d4' }}>♀</span> {sn(stocks, cross.parentA)} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>×</span> <span style={{ color: '#93c5fd' }}>♂</span> {sn(stocks, cross.parentB)}
+              </div>
+              <span className="badge shrink-0" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{tempLabel(cross.temperature)}</span>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {cd.o && <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5' }}>opto</span>}
+              {cd.c && <span className="badge" style={{ background: 'rgba(34,197,94,0.1)', color: '#86efac' }}>imaging</span>}
+              {cross.experimentType && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{cross.experimentType}</span>}
+            </div>
+          </div>
+
+          {/* Next action indicator */}
+          {nextAction && (
+            <div className="shrink-0 text-right">
+              {nextAction.urgent && <div className="w-2 h-2 rounded-full ml-auto mb-1" style={{ background: 'var(--red)', boxShadow: '0 0 6px rgba(239,68,68,0.4)' }} />}
+              {nextAction.date && <span className="text-[11px] font-medium" style={{ color: nextAction.urgent ? '#fca5a5' : 'var(--text-3)' }}>{fmt(nextAction.date)}</span>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ===== DETAIL POPUP ===== */}
+      <Modal open={detailOpen} onClose={() => setDetailOpen(false)} title={<div className="flex items-center gap-2">{cl(cross, stocks)} <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-3)', fontWeight: 500, fontSize: '11px' }}>{tempLabel(cross.temperature)}</span>{setPrintListCrosses && <button onClick={() => { const inList = (printListCrosses || []).includes(cross.id); setPrintListCrosses(p => inList ? p.filter(x => x !== cross.id) : [...p, cross.id]); toast.add(inList ? 'Removed from print list' : 'Added to print list'); }} className="touch p-1.5 rounded-lg transition-all active:scale-90" style={{ color: (printListCrosses || []).includes(cross.id) ? '#5eead4' : 'var(--text-3)' }} title={(printListCrosses || []).includes(cross.id) ? 'In print list' : 'Add to print list'}><svg width="16" height="16" viewBox="0 0 24 24" fill={(printListCrosses || []).includes(cross.id) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>}</div>}>
+        {/* Parents with genotypes */}
+        <div className="grid gap-3 mb-5">
+          <div className="card-inner p-4">
+            <span className="text-sm font-bold" style={{ color: '#f9a8d4' }}>♀ Virgin</span>
+            <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{sn(stocks, cross.parentA)}</p>
+            {sg(stocks, cross.parentA) && sg(stocks, cross.parentA) !== '+' && (
+              <p className="text-xs mono mt-1 break-all" style={{ color: 'rgba(167,139,250,0.5)' }}>{sg(stocks, cross.parentA)}</p>
+            )}
+          </div>
+          <div className="card-inner p-4">
+            <span className="text-sm font-bold" style={{ color: '#93c5fd' }}>♂ Male</span>
+            <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{sn(stocks, cross.parentB)}</p>
+            {sg(stocks, cross.parentB) && sg(stocks, cross.parentB) !== '+' && (
+              <p className="text-xs mono mt-1 break-all" style={{ color: 'rgba(167,139,250,0.5)' }}>{sg(stocks, cross.parentB)}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Timeline */}
+        <p className="section-header">Timeline</p>
+        <CrossTimeline cross={cross} />
+
+        {/* Dates - hide range for current collecting phase */}
+        {(() => {
+          const showVirgin = cross.status === 'waiting for virgins';
+          const showProgeny = cross.status === 'waiting for progeny';
+          if (!showVirgin && !showProgeny) return null;
+          return (
+            <div className={`grid gap-3 mt-3 mb-5 ${showVirgin && showProgeny ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {showVirgin && (
+                <div className="card-inner p-3 text-center">
+                  <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--text-3)' }}>Virgins</p>
+                  <p className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>{fmt(tl.virginStart)} – {fmt(tl.virginEnd)}</p>
+                </div>
+              )}
+              {showProgeny && (
+                <div className="card-inner p-3 text-center">
+                  <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--text-3)' }}>Progeny</p>
+                  <p className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>{fmt(tl.progenyStart)} – {fmt(tl.progenyEnd)}</p>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Next action */}
+        {nextAction && (
+          <div className="flex items-center gap-2 mb-5 p-3 rounded-xl" style={{ background: nextAction.urgent ? 'rgba(239,68,68,0.06)' : 'var(--accent-glow-2)', border: `1px solid ${nextAction.urgent ? 'rgba(239,68,68,0.1)' : 'rgba(139,92,246,0.1)'}` }}>
+            <div className="w-2 h-2 rounded-full shrink-0" style={{ background: nextAction.urgent ? 'var(--red)' : 'var(--accent)' }} />
+            <span className="text-sm font-medium flex-1" style={{ color: nextAction.urgent ? '#fca5a5' : 'var(--text-2)' }}>{nextAction.text}</span>
+            {nextAction.date && <span className="text-xs" style={{ color: 'var(--text-3)' }}>{fmt(nextAction.date)}</span>}
+          </div>
+        )}
+
+        {/* Ripening progress (retinal/GCaMP timing shown during ripening) */}
+        {(cd.o || cd.c) && cross.ripeningStartDate && cross.status === 'ripening' && (
+          <div className="text-xs mb-5" style={{ color: 'rgba(252,165,165,0.5)' }}>
+            {cd.o ? 'Retinal uptake' : 'GCaMP expression'} - {-dFromNow(cross.ripeningStartDate)}d / {cd.o ? 3 : 5}d {-dFromNow(cross.ripeningStartDate) >= (cd.o ? 3 : 5) ? '- ready' : ''}
+          </div>
+        )}
+
+        {/* Virgin collection progress - only during collecting */}
+        {cross.status === 'collecting virgins' && (
+          <div className="mb-5">
+            <div className="flex items-center justify-between">
+              <p className="section-header">Virgin Collection</p>
+              {cross.overnightAt18 !== undefined && (
+                <span className="text-[10px] px-2 py-0.5 rounded-md" style={{ background: cross.overnightAt18 ? 'rgba(139,92,246,0.1)' : 'rgba(148,163,184,0.1)', color: cross.overnightAt18 ? '#a78bfa' : 'var(--text-3)' }}>
+                  {cross.overnightAt18 ? '18°C overnight' : 'Room temp'}
+                </span>
+              )}
+            </div>
+            {(() => {
+              const parentStock = stocks.find(s => s.id === cross.parentA);
+              if (!parentStock?.vcs?.enabled) return null;
+              const nextActs = computeNextActions(parentStock.vcs, new Date());
+              const nextA = nextActs[0];
+              return (
+                <p className="text-[10px] mb-2 px-2 py-1 rounded-lg inline-block" style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa' }}>
+                  VCS from {parentStock.name}{nextA ? ` - Next: ${fmtTime(nextA.suggestedTime)}` : ''}
+                </p>
+              );
+            })()}
+            <div className="flex items-center gap-4 mb-3">
+              <CircleProgress value={vCollected} max={vTarget} size={56} stroke={4} countUp />
+              <div>
+                <p className="text-lg font-bold" style={{ color: 'var(--text-1)' }}>{vCollected} <span className="text-sm font-normal" style={{ color: 'var(--text-3)' }}>/ {vTarget}</span></p>
+                <p className="text-xs" style={{ color: 'var(--text-3)' }}>{Math.round((vCollected / vTarget) * 100)}% collected</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {[1, 3, 5].map(n => (
+                <button key={n} onClick={() => logVirgin(n)} className="qlog-btn flex-1">+{n}</button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Progeny collection progress - hide during waiting statuses */}
+        {!isVirginPhase && !['waiting for progeny'].includes(cross.status) && hasTarget && (
+          <div className="mb-5">
+            <p className="section-header">Collection Progress</p>
+            <div className="flex items-center gap-4 mb-3">
+              <CircleProgress value={tot} max={cross.targetCount} size={56} stroke={4} countUp />
+              <div>
+                <p className="text-lg font-bold" style={{ color: 'var(--text-1)' }}>{tot} <span className="text-sm font-normal" style={{ color: 'var(--text-3)' }}>/ {cross.targetCount}</span></p>
+                <p className="text-xs" style={{ color: 'var(--text-3)' }}>{Math.round((tot / cross.targetCount) * 100)}% collected</p>
+              </div>
+            </div>
+            {isCollecting && !isDone && (
+              <div className="flex gap-2">
+                {[1, 5, 10].map(n => (
+                  <button key={n} onClick={() => quickLog(n)} className="qlog-btn flex-1">+{n}</button>
+                ))}
+              </div>
+            )}
+            {(cross.collected || []).length > 0 && (
+              <div className="text-xs mt-3" style={{ color: 'var(--text-3)' }}>
+                Recent: {(cross.collected || []).slice(-5).map((e, i) => <span key={i}>{i > 0 ? ', ' : ''}{fmt(e.date)} +{e.count}</span>)}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Notes */}
+        {cross.notes && (
+          <div className="mb-5">
+            <p className="section-header">Notes</p>
+            <p className="text-sm" style={{ color: 'var(--text-2)' }}>{cross.notes}</p>
+          </div>
+        )}
+
+        {cross.status === 'screening' && expBank && setExpBank && (() => {
+          const entry = expBank[cross.id] || { m: 0, f: 0 };
+          return (
+            <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(94,234,212,0.04)', border: '1px solid rgba(94,234,212,0.1)' }}>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold" style={{ color: '#5eead4' }}>Exp Bank</p>
+                <p className="text-xs" style={{ color: 'var(--text-3)' }}>{entry.m || 0}♂ {entry.f || 0}♀</p>
+              </div>
+              <div className="mb-2">
+                <p className="text-[10px] mb-1" style={{ color: '#93c5fd' }}>♂</p>
+                <div className="flex gap-1">
+                  <button onClick={(e) => { e.stopPropagation(); setExpBank(prev => { const cur = prev[cross.id] || { m: 0, f: 0, source: 'cross' }; return { ...prev, [cross.id]: { ...cur, m: Math.max(0, cur.m - 1) } }; }); }} className="qlog-btn flex-1" disabled={(entry.m || 0) <= 0} style={(entry.m || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                  {[1, 3, 5].map(n => <button key={n} onClick={(e) => { e.stopPropagation(); setExpBank(prev => { const cur = prev[cross.id] || { m: 0, f: 0, source: 'cross' }; return { ...prev, [cross.id]: { ...cur, m: (cur.m || 0) + n } }; }); }} className="qlog-btn flex-1">+{n}</button>)}
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] mb-1" style={{ color: '#f9a8d4' }}>♀</p>
+                <div className="flex gap-1">
+                  <button onClick={(e) => { e.stopPropagation(); setExpBank(prev => { const cur = prev[cross.id] || { m: 0, f: 0, source: 'cross' }; return { ...prev, [cross.id]: { ...cur, f: Math.max(0, cur.f - 1) } }; }); }} className="qlog-btn flex-1" disabled={(entry.f || 0) <= 0} style={(entry.f || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                  {[1, 3, 5].map(n => <button key={n} onClick={(e) => { e.stopPropagation(); setExpBank(prev => { const cur = prev[cross.id] || { m: 0, f: 0, source: 'cross' }; return { ...prev, [cross.id]: { ...cur, f: (cur.f || 0) + n } }; }); }} className="qlog-btn flex-1">+{n}</button>)}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Screening Guide */}
+        {['collecting progeny', 'screening'].includes(cross.status) && (() => {
+          const guide = getScreeningGuide(cross, stocks);
+          if (guide.length === 0) return null;
+          return (
+            <div className="mb-5">
+              <p className="section-header">What to look for</p>
+              <div className="grid gap-2">
+                {guide.map((m, i) => (
+                  <div key={i} className="card-inner p-3 rounded-xl">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>{m.name}</span>
+                      {m.chromosome && <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{m.chromosome}</span>}
+                      <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{m.source}</span>
+                    </div>
+                    <p className="text-xs" style={{ color: 'var(--text-3)' }}>{m.phenotype}</p>
+                    <p className="text-xs font-semibold mt-1" style={{ color: '#86efac' }}>Select: {m.select}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Actions */}
+        <div className="grid gap-2">
+          {!isDone ? (
+            <Btn v="advance" onClick={advance} className="w-full">Advance → {(() => { let ns = nextSt(cross.status); if (ns === 'ripening' && !cd.o && !cd.c) ns = nextSt(ns); return ns; })()}</Btn>
+          ) : (
+            <Btn v="s" onClick={() => {
+              const newId = uid();
+              markEdited(newId);
+              setCrosses(p => [...p, {
+                ...cross, id: newId, status: 'set up', setupDate: today(),
+                collected: [], vials: [], retinalStartDate: '', notes: cross.notes ? `Repeat: ${cross.notes}` : 'Repeat',
+                manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+              }]);
+              toast.add('Cross repeated');
+              setDetailOpen(false);
+            }} className="w-full">Repeat Cross</Btn>
+          )}
+          <div className="grid grid-cols-3 gap-2">
+            <Btn v="s" onClick={() => { setEditing(true); setDetailOpen(false); }}>Edit</Btn>
+            <Btn v="s" onClick={exportCal}>Calendar</Btn>
+            {cross.status === 'waiting for progeny' ? (
+              <Btn v="s" onClick={revial}>Re-vial</Btn>
+            ) : isDone ? (
+              <Btn v="d" onClick={() => { setDeleting(true); setDetailOpen(false); }}>Delete</Btn>
+            ) : <Btn v="s" disabled style={{ opacity: 0.3 }}>Re-vial</Btn>}
+          </div>
+          {!isDone && (
+            <>
+              <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Jump to status</p>
+              <div className="flex flex-wrap gap-1.5">
+                {STATUSES.filter(s => s !== cross.status).map(s => (
+                  <button key={s} onClick={() => setStatus(s)}
+                    className="px-3 py-1.5 text-xs rounded-lg transition-all active:scale-95 cursor-pointer"
+                    style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>{s}</button>
+                ))}
+              </div>
+              <Btn v="d" onClick={() => { setDeleting(true); setDetailOpen(false); }} className="w-full mt-2">Delete Cross</Btn>
+            </>
+          )}
+          {onTransfer && (
+            <div className="mt-3">
+              <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: 'var(--text-3)' }}>Transfer ownership</p>
+              <div className="flex flex-wrap gap-1.5">
+                {USERS.filter(u => u !== currentUser).map(u => (
+                  <button key={u} onClick={() => { onTransfer({ type: 'cross', itemId: cross.id, name: cl(cross, stocks), to: u }); setDetailOpen(false); }}
+                    className="px-3 py-1.5 text-xs rounded-lg transition-all active:scale-95 cursor-pointer"
+                    style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>{u}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <EditCrossModal open={editing} onClose={() => setEditing(false)} cross={cross} stocks={stocks} setCrosses={setCrosses} toast={toast} allCrosses={[]} />
+      <Confirm open={deleting} onOk={doDelete} onNo={() => setDeleting(false)} title="Delete cross?" msg="This cross and all collection data will be permanently removed." />
+    </>
+  );
+}
+
+/* ========== EDIT CROSS MODAL ========== */
+function EditCrossModal({ open, onClose, cross, stocks, setCrosses, toast, allCrosses }) {
+  const [f, setF] = useState({});
+  const [showAdv, setShowAdv] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
+
+  useEffect(() => {
+    if (open && cross) {
+      setF({ ...cross });
+      setShowNotes(!!cross.notes);
+      setShowAdv(!!cross.manualFlipDate || !!cross.manualEcloseDate || !!cross.manualVirginDate || cross.crossType === 'sequential');
+    }
+  }, [open, cross?.id]);
+
+  if (!open) return null;
+
+  function save() {
+    markEdited(cross.id);
+    setCrosses(p => p.map(c => c.id === cross.id ? { ...c, ...f } : c));
+    toast.add('Cross updated');
+    onClose();
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Edit Cross">
+      <Field label="Virgin parent">
+        <div className="card-inner px-4 py-3 text-sm" style={{ color: 'var(--text-2)' }}>{sn(stocks, f.parentA)}</div>
+      </Field>
+      <Field label="Male parent">
+        <div className="card-inner px-4 py-3 text-sm" style={{ color: 'var(--text-2)' }}>{sn(stocks, f.parentB)}</div>
+      </Field>
+      <Field label="Location">
+        <div className="grid grid-cols-2 gap-2">
+          {TEMPS.map(t => (
+            <div key={t} onClick={() => setF({ ...f, temperature: t })} className={`loc-card ${f.temperature === t ? 'selected' : ''}`}>
+              <div className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>{tempFull(t)}</div>
+            </div>
+          ))}
+        </div>
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Target count"><Inp type="number" min="0" value={f.targetCount || ''} onChange={e => setF({ ...f, targetCount: parseInt(e.target.value) || 0 })} /></Field>
+        <Field label="Experiment type">
+          <select value={f.experimentType || ''} onChange={e => setF({ ...f, experimentType: e.target.value })}
+            className="w-full px-4 py-3 text-sm rounded-xl">
+            <option value="">None</option>
+            <option value="optogenetics">Optogenetics</option>
+            <option value="2p">2P</option>
+            <option value="2p+vr">2P + VR</option>
+            <option value="behavior">Behaviour</option>
+
+            <option value="flydisco">FlyDisco</option>
+            <option value="vr">VR</option>
+            <option value="dissection">Dissection / Immunostaining</option>
+            <option value="other">Other</option>
+          </select>
+        </Field>
+      </div>
+      {f.experimentType && <Field label="Experiment date"><Inp type="date" value={f.experimentDate || ''} onChange={e => setF({ ...f, experimentDate: e.target.value })} /></Field>}
+      {!showNotes ? (
+        <button onClick={() => setShowNotes(true)} className="text-xs mb-4 touch" style={{ color: 'var(--accent-2)' }}>+ add notes</button>
+      ) : (
+        <Field label="Notes"><Txt value={f.notes || ''} onChange={e => setF({ ...f, notes: e.target.value })} rows={2} /></Field>
+      )}
+      <button onClick={() => setShowAdv(!showAdv)} className="text-xs mb-3 touch" style={{ color: 'var(--text-3)' }}>{showAdv ? 'Hide' : 'Show'} advanced</button>
+      {showAdv && (
+        <div className="card-inner p-4 mb-4">
+          <p className="text-[11px] mb-3" style={{ color: 'var(--text-3)' }}>Override calculated dates:</p>
+          <div className="grid grid-cols-3 gap-2">
+            <Field label="Flip"><Inp type="date" value={f.manualFlipDate || ''} onChange={e => setF({ ...f, manualFlipDate: e.target.value })} /></Field>
+            <Field label="Virgin"><Inp type="date" value={f.manualVirginDate || ''} onChange={e => setF({ ...f, manualVirginDate: e.target.value })} /></Field>
+            <Field label="Eclose"><Inp type="date" value={f.manualEcloseDate || ''} onChange={e => setF({ ...f, manualEcloseDate: e.target.value })} /></Field>
+          </div>
+          <Field label="Cross type">
+            <select value={f.crossType || 'simple'} onChange={e => setF({ ...f, crossType: e.target.value })}
+              className="w-full px-4 py-3 text-sm rounded-xl">
+              <option value="simple">Simple</option>
+              <option value="sequential">Sequential (F1 cross)</option>
+            </select>
+          </Field>
+          <Field label="Setup date"><Inp type="date" value={f.setupDate || ''} onChange={e => setF({ ...f, setupDate: e.target.value })} /></Field>
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Btn onClick={save} className="flex-1">Save</Btn>
+        <Btn v="s" onClick={onClose}>Cancel</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ========== NEW CROSS WIZARD ========== */
+function NewCrossWizard({ open, onClose, stocks, setCrosses, toast, virginBank, setVirginBank, preselectedVirgin, virginsPerCross, currentUser }) {
+  const [step, setStep] = useState(1);
+  const [parentA, setParentA] = useState(null);
+  const [parentB, setParentB] = useState(null);
+  const [temperature, setTemperature] = useState('25inc');
+  const [targetCount, setTargetCount] = useState('');
+  const [experimentType, setExperimentType] = useState('optogenetics');
+  const [notes, setNotes] = useState('');
+  const [showNotes, setShowNotes] = useState(false);
+  const [search, setSearch] = useState('');
+  const [overnightAt18, setOvernightAt18] = useState(true);
+
+  useEffect(() => {
+    if (open) {
+      setTemperature('25inc');
+      setExperimentType(''); setNotes(''); setShowNotes(false); setSearch(''); setOvernightAt18(true);
+      if (preselectedVirgin) {
+        const stock = stocks.find(s => s.id === preselectedVirgin);
+        setParentA(stock || null);
+        setParentB(null);
+        setStep(stock ? 2 : 1);
+        setTargetCount('15');
+      } else {
+        setStep(1); setParentA(null); setParentB(null); setTargetCount('');
+      }
+    }
+  }, [open]);
+
+  if (!open) return null;
+
+  const filteredStocks = stocks.filter(s =>
+    !search || [s.name, s.genotype, s.notes || '', s.sourceId || '', s.flybaseId || '', ...stockTags(s)].some(x => x.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  function finish() {
+    const needed = virginsPerCross || 5;
+    const available = virginBank?.[parentA.id] || 0;
+    let initialStatus = 'waiting for virgins';
+    let msg = 'Cross created - waiting for virgins';
+
+    if (available >= needed) {
+      setVirginBank(prev => ({ ...prev, [parentA.id]: (prev[parentA.id] || 0) - needed }));
+      initialStatus = 'waiting for progeny';
+      msg = `Cross created - used ${needed} banked virgins`;
+    }
+
+    const cross = {
+      id: uid(), parentA: parentA.id, parentB: parentB.id, temperature,
+      setupDate: today(), status: initialStatus, notes, overnightAt18,
+      targetCount: parseInt(targetCount) || 0, collected: [], vials: [],
+      manualFlipDate: '', manualEcloseDate: '', manualVirginDate: '',
+      crossType: 'simple', parentCrossId: '',
+      experimentType, experimentDate: '', retinalStartDate: '',
+      owner: currentUser,
+      ...(initialStatus === 'waiting for progeny' ? { waitStartDate: today() } : {}),
+    };
+    markEdited(cross.id);
+    setCrosses(p => [...p, cross]);
+    toast.add(msg);
+    onClose();
+  }
+
+  function StockList({ onPick, exclude }) {
+    return (
+      <div>
+        <Inp placeholder="Search stocks..." value={search} onChange={e => setSearch(e.target.value)} className="mb-3" autoFocus={!isTouchDevice()} />
+        {filteredStocks.length === 0 ? (
+          <p className="text-sm text-center py-8" style={{ color: 'var(--text-3)' }}>No stocks found</p>
+        ) : (
+          <div className="grid gap-1 max-h-[50vh] overflow-y-auto">
+            {filteredStocks.filter(s => !exclude || s.id !== exclude).map(s => {
+              const tags = stockTags(s);
+              return (
+                <div key={s.id} onClick={() => { onPick(s); setSearch(''); }} className="stock-pick card-inner">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
+                    <span className="badge" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>{tempLabel(s.location)}</span>
+                    <TagBadges tags={tags} limit={isTouchDevice() ? 2 : undefined} />
+                  </div>
+                  {s.genotype && s.genotype !== '+' && <p className="text-xs mono truncate mt-1" style={{ color: 'rgba(167,139,250,0.4)' }}>{s.genotype}</p>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const DEFAULT_TARGETS = { optogenetics: 30, '2p': 15, '2p+vr': 15, behavior: 20, flydisco: 20, vr: 15, dissection: 10, other: 15, '': 15 };
+  function onExpTypeChange(val) {
+    setExperimentType(val);
+    if (!targetCount || targetCount === String(DEFAULT_TARGETS[experimentType] || 15)) {
+      setTargetCount(String(DEFAULT_TARGETS[val] || 15));
+    }
+  }
+  const titles = { 1: 'Pick ♀ virgin parent', 2: 'Pick ♂ male parent', 3: 'Pick location', 4: 'Details (optional)' };
+
+  return (
+    <Modal open={open} onClose={onClose} title={titles[step]}>
+      {/* Progress dots */}
+      <div className="flex items-center justify-center gap-2 mb-5">
+        {[1, 2, 3, 4].map(s => (
+          <div key={s} className="rounded-full transition-all" style={{
+            width: s === step ? 24 : 8,
+            height: 8,
+            background: s === step ? 'var(--accent)' : s < step ? 'rgba(139,92,246,0.4)' : 'var(--surface-3)',
+            boxShadow: s === step ? '0 0 12px var(--accent-glow)' : 'none',
+          }} />
+        ))}
+      </div>
+
+      {step === 1 && (
+        <div>
+          {stocks.length === 0 ? (
+            <p className="text-sm text-center py-8" style={{ color: 'var(--text-3)' }}>Add stocks first</p>
+          ) : (
+            <StockList onPick={s => { setParentA(s); setStep(2); }} />
+          )}
+        </div>
+      )}
+
+      {step === 2 && (
+        <div>
+          <div className="card-inner px-4 py-3 mb-4 flex items-center gap-2">
+            <span className="text-xs" style={{ color: 'var(--text-3)' }}>♀</span>
+            <span className="text-sm font-medium" style={{ color: 'var(--text-1)' }}>{parentA?.name}</span>
+            <button onClick={() => setStep(1)} className="ml-auto text-xs touch" style={{ color: 'var(--accent-2)' }}>change</button>
+          </div>
+          <StockList onPick={s => { setParentB(s); setStep(3); }} exclude={parentA?.id} />
+        </div>
+      )}
+
+      {step === 3 && (
+        <div>
+          <div className="card-inner px-4 py-3 mb-4">
+            <div className="text-sm font-medium" style={{ color: 'var(--text-1)' }}>{parentA?.name} <span style={{ color: 'var(--text-3)' }}>×</span> {parentB?.name}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            {TEMPS.map(t => (
+              <div key={t} onClick={() => setTemperature(t)} className={`loc-card ${temperature === t ? 'selected' : ''}`}>
+                <div className="text-base font-bold mb-0.5" style={{ color: 'var(--text-1)' }}>{tempFull(t)}</div>
+              </div>
+            ))}
+          </div>
+          <Btn onClick={() => setStep(4)} className="w-full">Next</Btn>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div>
+          <div className="card-inner px-4 py-3 mb-4">
+            <div className="text-sm font-medium" style={{ color: 'var(--text-1)' }}>{parentA?.name} <span style={{ color: 'var(--text-3)' }}>×</span> {parentB?.name}</div>
+            <div className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>{tempFull(temperature)} · Setup today</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Target count"><Inp type="number" min="0" value={targetCount} onChange={e => setTargetCount(e.target.value)} placeholder="0" /></Field>
+            <Field label="Experiment type">
+              <select value={experimentType} onChange={e => onExpTypeChange(e.target.value)}
+                className="w-full px-4 py-3 text-sm rounded-xl">
+                <option value="optogenetics">Optogenetics</option>
+                <option value="2p">2P</option>
+                <option value="2p+vr">2P + VR</option>
+                <option value="behavior">Behaviour</option>
+    
+                <option value="flydisco">FlyDisco</option>
+                <option value="vr">VR</option>
+                <option value="dissection">Dissection / Immunostaining</option>
+                <option value="other">Other</option>
+              </select>
+            </Field>
+          </div>
+          <div className="mb-3">
+            <button onClick={() => setOvernightAt18(!overnightAt18)}
+              className="w-full px-4 py-2.5 text-xs font-semibold rounded-xl transition-all active:scale-[0.97] cursor-pointer"
+              style={overnightAt18
+                ? { background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }
+                : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
+              {overnightAt18 ? '18°C overnight - virgins in morning' : 'Room temp overnight - discard in morning'}
+            </button>
+            <p className="text-[10px] mt-1 text-center" style={{ color: 'var(--text-3)' }}>{overnightAt18 ? '16h virgin window' : '8h virgin window'}</p>
+          </div>
+          {!showNotes ? (
+            <button onClick={() => setShowNotes(true)} className="text-xs mb-4 touch" style={{ color: 'var(--accent-2)' }}>+ add notes</button>
+          ) : (
+            <Field label="Notes"><Txt value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Optional notes..." /></Field>
+          )}
+          <Btn onClick={finish} className="w-full">Create Cross</Btn>
+          <p className="text-[11px] text-center mt-3" style={{ color: 'var(--text-3)' }}>Setup date = today, timeline auto-calculated</p>
+        </div>
+      )}
+
+      {step > 1 && (
+        <button onClick={() => setStep(step - 1)} className="text-xs mt-3 touch block mx-auto" style={{ color: 'var(--text-3)' }}>← Back</button>
+      )}
+    </Modal>
+  );
+}
+
+/* ========== ERROR BOUNDARY ========== */
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error('ErrorBoundary caught:', error, info); }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement('div', { className: 'card p-8 text-center m-6', style: { border: '1px solid rgba(239,68,68,0.2)' } },
+        React.createElement('p', { className: 'text-sm font-semibold mb-2', style: { color: '#fca5a5' } }, 'Something went wrong'),
+        React.createElement('p', { className: 'text-xs mb-4', style: { color: 'var(--text-3)' } }, this.state.error?.message || 'Unknown error'),
+        React.createElement('button', { onClick: () => this.setState({ hasError: false, error: null }), className: 'px-4 py-2 text-xs font-semibold rounded-lg cursor-pointer', style: { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' } }, 'Try Again')
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/* ========== HOME SCREEN ========== */
+function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross, virginBank, setVirginBank, virginsPerCross, currentUser, transfers, onAcceptTransfer, onDeclineTransfer, onTransfer, STOCK_CATS, sentTransfers, onDismissTransfer, printListCrosses, setPrintListCrosses, printListVirgins, setPrintListVirgins, initialCrossId, expBank, setExpBank }) {
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [flipCat, setFlipCat] = useState(null);
+  const [flipDate, setFlipDate] = useState(today());
+  const [homeEditStock, setHomeEditStock] = useState(null);
+  const [vcsBankPrompt, setVcsBankPrompt] = useState(null); // { stockId, stockName }
+  const [vcs18Confirm, setVcs18Confirm] = useState(null); // { stockId, key, type, withCollect }
+  const [crossVcs18Confirm, setCrossVcs18Confirm] = useState(null); // { crossId, key, type }
+  const [crossVcsBankPrompt, setCrossVcsBankPrompt] = useState(null); // { crossId, crossName }
+  const [selectedCrossId, setSelectedCrossId] = useState(initialCrossId || null);
+  const activeRef = useRef(null);
+  const healthRef = useRef(null);
+
+  const myCrosses = useMemo(() => crosses.filter(c => !c.owner || c.owner === currentUser), [crosses, currentUser]);
+  const activeCrosses = useMemo(() => {
+    const urgent = ['collecting virgins', 'collecting progeny', 'ripening'];
+    return myCrosses.filter(c => c.status !== 'done').sort((a, b) => urgent.includes(b.status) - urgent.includes(a.status));
+  }, [myCrosses]);
+  const completedCrosses = useMemo(() => myCrosses.filter(c => c.status === 'done'), [myCrosses]);
+
+  // Auto-promote waiting states
+  useEffect(() => {
+    const promotions = [
+      { from: 'waiting for virgins', to: 'collecting virgins', field: 'setupDate', days: 9 },
+      { from: 'waiting for progeny', to: 'collecting progeny', field: 'waitStartDate', days: 9 },
+    ];
+    let changed = false;
+    const updated = crosses.map(c => {
+      for (const p of promotions) {
+        if (c.status === p.from && c[p.field] && -dFromNow(c[p.field]) >= p.days) {
+          changed = true;
+          markEdited(c.id);
+          toast.add(`${cl(c, stocks)} → ${p.to}`);
+          const extra = p.to === 'collecting virgins' ? { vcs: makeVcs(c.overnightAt18 !== false, 2, VCS_DEFAULTS[vcsKey(c.overnightAt18 !== false, 2)]) } : {};
+          return { ...c, status: p.to, ...extra };
+        }
+      }
+      return c;
+    });
+    if (changed) setCrosses(updated);
+  }, [crosses, stocks]);
+
+  // Backfill: auto-assign VCS to collecting-virgins crosses that lack it
+  useEffect(() => {
+    const need = crosses.filter(c => c.status === 'collecting virgins' && !c.vcs);
+    if (!need.length) return;
+    setCrosses(p => p.map(c => {
+      if (c.status === 'collecting virgins' && !c.vcs) {
+        const o18 = c.overnightAt18 !== false;
+        return { ...c, vcs: makeVcs(o18, 2, VCS_DEFAULTS[vcsKey(o18, 2)]) };
+      }
+      return c;
+    }));
+  }, [crosses]);
+
+  // Active tasks: only crosses that need action RIGHT NOW
+  const activeTasks = useMemo(() => {
+    const now = new Date();
+    return activeCrosses.filter(c => {
+      if (c.status === 'collecting virgins') {
+        // With VCS: only show if next action is within 20min or overdue
+        if (c.vcs?.enabled) {
+          const actions = computeNextActions(c.vcs, now);
+          const next = actions[0];
+          if (!next) return false;
+          return next.timeUntilMs <= 20 * 60000 || next.isPastDeadline;
+        }
+        return true; // no VCS: always show
+      }
+      if (c.status === 'collecting progeny') return true;
+      if (c.status === 'ripening') {
+        if (!c.ripeningStartDate) return false;
+        const cd = crossDetect(c, stocks);
+        const rDays = -dFromNow(c.ripeningStartDate);
+        return rDays >= (cd.o ? 3 : 5);
+      }
+      if (c.status === 'waiting for virgins') return -dFromNow(c.setupDate) >= 9;
+      if (c.status === 'waiting for progeny') return c.waitStartDate && -dFromNow(c.waitStartDate) >= 9;
+      return false;
+    });
+  }, [activeCrosses, stocks]);
+
+  const actionSummary = useMemo(() => {
+    let overdue = 0;
+    let dueToday = 0;
+
+    activeCrosses.forEach(c => {
+      const tl = getTL(c);
+      const cd = crossDetect(c, stocks);
+      if (c.status === 'set up') {
+        const d = dFromNow(tl.virginStart);
+        if (d < 0) overdue++;
+        else if (d === 0) dueToday++;
+      }
+      if (c.status === 'waiting for progeny' && c.waitStartDate && -dFromNow(c.waitStartDate) >= 9) overdue++;
+      // retinal starts automatically when entering ripening
+    });
+
+    stocks.forEach(s => {
+      if (s.maintainer && s.maintainer !== currentUser) return;
+      if (stockTags(s).includes('Dead')) return;
+      const ld = s.lastFlipped || s.createdAt;
+      if (!ld) return;
+      const age = -dFromNow(ld);
+      const threshold = getFlipDays(s);
+      if (age >= threshold) overdue++;
+    });
+
+    return { overdue, dueToday };
+  }, [activeCrosses, stocks]);
+
+  const stocksNeedFlip = useMemo(() => {
+    return stocks.filter(s => {
+      if (s.maintainer && s.maintainer !== currentUser) return false;
+      if (stockTags(s).includes('Dead')) return false;
+      const ld = s.lastFlipped || s.createdAt;
+      if (!ld) return false;
+      const age = -dFromNow(ld);
+      const threshold = getFlipDays(s);
+      return age >= threshold;
+    });
+  }, [stocks, currentUser]);
+
+  function flipStock(id) {
+    markEdited(id);
+    setStocks(p => p.map(s => s.id === id ? { ...s, lastFlipped: today() } : s));
+    toast.add('Flipped');
+  }
+
+  function scrollToActive() {
+    activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  return (
+    <div className="pb-8">
+      {/* Transfer notifications */}
+      {transfers && transfers.length > 0 && (
+        <div className="mb-6 space-y-2">
+          {transfers.map(t => (
+            <div key={t.id} className="card p-4" style={{ borderColor: 'rgba(139,92,246,0.2)', background: 'rgba(139,92,246,0.06)' }}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>
+                    {t.from} wants to transfer {t.type === 'collection' ? `"${t.collection}" collection` : t.name || t.type}
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>
+                    {t.type === 'stock' ? 'Stock maintainership' : t.type === 'cross' ? 'Cross ownership' : 'Entire collection'}
+                  </p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <Btn onClick={() => onAcceptTransfer(t)} style={{ fontSize: '12px', padding: '6px 12px' }}>Accept</Btn>
+                  <Btn v="s" onClick={() => onDeclineTransfer(t)} style={{ fontSize: '12px', padding: '6px 12px' }}>Decline</Btn>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Sent transfer results */}
+      {sentTransfers && sentTransfers.length > 0 && (
+        <div className="mb-6 space-y-2">
+          {sentTransfers.map(t => (
+            <div key={t.id} className="card p-4" style={{ borderColor: t.status === 'accepted' ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)', background: t.status === 'accepted' ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)' }}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>
+                    {t.to} {t.status} your transfer of {t.type === 'collection' ? `"${t.collection}" collection` : t.name || t.type}
+                  </p>
+                </div>
+                <button onClick={() => onDismissTransfer(t)}
+                  className="text-xs px-3 py-1.5 rounded-lg transition-all active:scale-95 shrink-0"
+                  style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>OK</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Action banner */}
+      <div className="mb-6">
+        {actionSummary.overdue > 0 ? (
+          <div className="banner banner-red" onClick={scrollToActive}>
+            {actionSummary.overdue} thing{actionSummary.overdue > 1 ? 's' : ''} overdue
+          </div>
+        ) : actionSummary.dueToday > 0 ? (
+          <div className="banner banner-amber" onClick={scrollToActive}>
+            {actionSummary.dueToday} thing{actionSummary.dueToday > 1 ? 's' : ''} due today
+          </div>
+        ) : null}
+      </div>
+
+      {/* Active Tasks - immediately after overdue banner */}
+      {activeTasks.length > 0 && (
+        <div className="mb-6">
+          <p className="section-header">Active Tasks</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {activeTasks.map(c => {
+              const isCollVgn = c.status === 'collecting virgins';
+              const isCollProg = c.status === 'collecting progeny';
+              const isRipening = c.status === 'ripening';
+              const isVirgin = c.status === 'waiting for virgins';
+              const cd = crossDetect(c, stocks);
+              let waited, ripeRemaining;
+              if (isRipening && c.ripeningStartDate) {
+                const rDays = -dFromNow(c.ripeningStartDate);
+                const rTarget = cd.o ? 3 : 5;
+                ripeRemaining = Math.max(0, rTarget - rDays);
+              }
+              waited = (isCollVgn || isCollProg || isRipening) ? 0 : -dFromNow(isVirgin ? c.setupDate : c.waitStartDate);
+              const target = 9;
+              const remaining = (isCollVgn || isCollProg || isRipening) ? 0 : target - waited;
+              const ready = isCollVgn || isCollProg || (isRipening && (ripeRemaining === undefined || ripeRemaining <= 0)) || remaining <= 0;
+              const ripeWaiting = isRipening && ripeRemaining > 0;
+              const tintR = ready ? 'rgba(239,68,68,' : 'rgba(245,158,11,';
+              const tintC = ready ? '#fca5a5' : '#fcd34d';
+              return (
+                <div key={c.id} className="card p-4 cursor-pointer" style={{ borderColor: tintR + '0.15)', background: tintR + '0.06)' }}
+                  onClick={() => { setSelectedCrossId(null); setTimeout(() => setSelectedCrossId(c.id), 0); activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{
+                      background: tintR + '0.1)',
+                      border: '1px solid ' + tintR + '0.15)',
+                    }}>
+                      <span className="text-xs" style={{ color: tintC }}>{ripeWaiting ? ripeRemaining + 'd' : ready ? '!' : remaining + 'd'}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold truncate" style={{ color: 'var(--text-1)' }}>{cl(c, stocks)}</p>
+                      <p className="text-xs" style={{ color: tintC }}>
+                        {isRipening ? (ripeRemaining <= 0 ? 'Ripening complete - ready!' : `${ripeRemaining}d ${cd.o ? 'retinal uptake' : 'GCaMP expression'} remaining`)
+                          : isCollProg ? 'Collect progeny now!'
+                          : isCollVgn ? 'Collect virgins for this cross'
+                          : ready
+                            ? (isVirgin ? 'Virgins eclosing - collect now!' : 'Progeny ready - collect now!')
+                            : (isVirgin ? `${remaining}d until virgins eclose` : `${remaining}d until progeny ready`)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* VCS Dashboard + Virgin-phase crosses */}
+      {(() => {
+        const vcsStocks = stocks.filter(s => s.vcs?.enabled && s.maintainer === currentUser && !stockTags(s).includes('Dead'));
+        const virginCrosses = myCrosses.filter(c => c.status === 'collecting virgins' || c.status === 'waiting for virgins');
+        if (!vcsStocks.length && !virginCrosses.length) return null;
+        const now = new Date();
+        // Sort by urgency: red first, then yellow, then green, then by next action time
+        const sorted = [...vcsStocks].sort((a, b) => {
+          const sa = getVcsStatus(a.vcs, now), sb = getVcsStatus(b.vcs, now);
+          const order = { red: 0, yellow: 1, green: 2 };
+          if (order[sa] !== order[sb]) return order[sa] - order[sb];
+          const na = computeNextActions(a.vcs, now), nb = computeNextActions(b.vcs, now);
+          return (na[0]?.suggestedMs || Infinity) - (nb[0]?.suggestedMs || Infinity);
+        });
+        return (
+          <div className="mb-6">
+            <p className="section-header">Virgin Collections</p>
+
+            {/* Waiting-for-virgins crosses (simple cards) */}
+            {(() => {
+              const waitingCrosses = virginCrosses.filter(c => c.status === 'waiting for virgins');
+              if (!waitingCrosses.length) return null;
+              return (
+                <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-3`}>
+                  {waitingCrosses.map(c => {
+                    const waited = -dFromNow(c.setupDate);
+                    const remaining = 9 - waited;
+                    const ready = remaining <= 0;
+                    const dotColor = ready ? '#f9a8d4' : 'var(--text-3)';
+                    const borderColor = ready ? 'rgba(249,168,212,0.3)' : 'rgba(148,163,184,0.15)';
+                    return (
+                      <div key={c.id} className="card p-3 cursor-pointer" style={{ border: `1px solid ${borderColor}` }}
+                        onClick={() => { setSelectedCrossId(null); setTimeout(() => setSelectedCrossId(c.id), 0); activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />
+                            <p className="text-xs font-bold truncate" style={{ color: 'var(--text-1)' }}>{cl(c, stocks)}</p>
+                          </div>
+                          <span className="text-[9px] shrink-0 ml-2" style={{ color: 'var(--text-3)' }}>
+                            {c.overnightAt18 !== undefined ? (c.overnightAt18 ? '18°C' : 'RT') + ' · ' : ''}{remaining}d
+                          </span>
+                        </div>
+                        <p className="text-[11px] mb-1.5" style={{ color: ready ? '#f9a8d4' : 'var(--text-3)' }}>
+                          {ready ? 'Virgins eclosing - collect!' : `Waiting - ${remaining}d until virgins`}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {/* Collecting-virgins crosses - full VCS-style cards */}
+            {(() => {
+              const collectingCrosses = virginCrosses.filter(c => c.status === 'collecting virgins' && c.vcs?.enabled);
+              if (!collectingCrosses.length) return null;
+              // Sort by urgency like VCS stocks
+              const sortedCrosses = [...collectingCrosses].sort((a, b) => {
+                const sa = getVcsStatus(a.vcs, now), sb = getVcsStatus(b.vcs, now);
+                const order = { red: 0, yellow: 1, green: 2 };
+                if (order[sa] !== order[sb]) return order[sa] - order[sb];
+                const na = computeNextActions(a.vcs, now), nb = computeNextActions(b.vcs, now);
+                return (na[0]?.suggestedMs || Infinity) - (nb[0]?.suggestedMs || Infinity);
+              });
+
+              function logCrossAction(crossId, type, key, temp) {
+                const c = crosses.find(x => x.id === crossId);
+                if (!c?.vcs) return;
+                const v = c.vcs;
+                const actions = computeNextActions(v, now);
+                const next = actions[0];
+                const action = { type, key, time: new Date().toISOString(), scheduled: next?.scheduled || '' };
+                const newActions = [...(v.todayActions || []), action];
+                let newVcs = { ...v, todayActions: newActions };
+                if (type === 'clear' || type === 'clear_discard') {
+                  newVcs.lastClearTime = action.time;
+                  newVcs.lastClearTemp = temp || (v.overnightAt18 ? '18' : '25');
+                  newVcs.virginDeadline = computeDeadline(action.time, newVcs.lastClearTemp === '18');
+                  newVcs.todayActions = [action];
+                }
+                markEdited(crossId);
+                setCrosses(p => p.map(x => x.id === crossId ? { ...x, vcs: newVcs } : x));
+                const cName = cl(c, stocks);
+                const msgs = { collect: 'Collected', clear: v.overnightAt18 ? 'Cleared → 18°C' : 'Cleared', clear_discard: 'Cleared & discarded' };
+                toast.add(`${cName}: ${msgs[type] || 'Done'}`);
+              }
+
+              return (
+                <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${vcsStocks.length ? 'mb-3' : ''}`}>
+                  {sortedCrosses.map(c => {
+                    const v = c.vcs;
+                    const status = getVcsStatus(v, now);
+                    const actions = computeNextActions(v, now);
+                    const next = actions[0];
+                    const progress = vcsWindowProgress(v, now);
+                    const cycleAt18 = v.lastClearTemp ? v.lastClearTemp === '18' : v.overnightAt18;
+                    const deadline = v.lastClearTime ? computeDeadline(v.lastClearTime, cycleAt18) : null;
+                    const vCollected = c.virginsCollected || 0;
+                    const vTarget = virginsPerCross || 5;
+
+                    const borderColor = status === 'red' ? 'rgba(239,68,68,0.3)' : status === 'yellow' ? 'rgba(234,179,8,0.3)' : 'rgba(94,234,212,0.2)';
+                    const dotColor = status === 'red' ? '#ef4444' : status === 'yellow' ? '#eab308' : '#5eead4';
+                    const isInGracePeriod = next?.isInGracePeriod || (deadline && now > new Date(deadline) && now <= new Date(new Date(deadline).getTime() + 30 * 60000));
+                    const isPastDeadline = next?.isPastDeadline || (deadline && now > new Date(new Date(deadline).getTime() + 30 * 60000));
+
+                    return (
+                      <div key={c.id} className="card p-3 cursor-pointer" style={{ border: `1px solid ${borderColor}` }}
+                        onClick={() => { setSelectedCrossId(null); setTimeout(() => setSelectedCrossId(c.id), 0); activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />
+                            <p className="text-xs font-bold truncate" style={{ color: 'var(--text-1)' }}>{cl(c, stocks)}</p>
+                          </div>
+                          <span className="text-[9px] shrink-0 ml-2" style={{ color: 'var(--text-3)' }}>
+                            {v.overnightAt18 ? '18°C' : '25°C'} · {v.collectionsPerDay}x · {vCollected}/{vTarget}
+                          </span>
+                        </div>
+
+                        {/* Progress bar */}
+                        {v.lastClearTime && (
+                          <div className="mb-1.5">
+                            <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+                              <div className="h-full rounded-full transition-all" style={{
+                                width: `${Math.min(100, progress * 100)}%`,
+                                background: progress > 0.9 ? '#ef4444' : progress > 0.7 ? '#eab308' : '#5eead4'
+                              }} />
+                            </div>
+                            <div className="flex justify-between mt-0.5">
+                              <span className="text-[9px]" style={{ color: 'var(--text-3)' }}>Cleared {fmtTime(v.lastClearTime)}</span>
+                              <span className="text-[9px]" style={{ color: progress > 0.9 ? '#ef4444' : 'var(--text-3)' }}>{next ? 'Next ' + fmtTime(next.suggestedTime) : (deadline ? 'Expires ' + fmtTime(deadline) : '--')}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Status message */}
+                        {isPastDeadline ? (
+                          <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#ef4444' }}>Expired - clear & discard</p>
+                        ) : isInGracePeriod ? (
+                          <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#eab308' }}>LATE - collect now or discard</p>
+                        ) : next && next.timeUntilMs > 2 * 3600000 ? (
+                          <p className="text-[11px] mb-1.5" style={{ color: '#5eead4' }}>Done for now - next: {fmtTime(next.suggestedTime)}</p>
+                        ) : next ? (
+                          <p className="text-[11px] mb-1.5" style={{ color: next.isOverdue ? '#ef4444' : next.timeUntilMs < 30 * 60000 ? '#eab308' : 'var(--text-2)' }}>
+                            {next.isOverdue ? 'OVERDUE: ' : ''}{next.label} - {fmtTime(next.suggestedTime)} ({next.timeUntilMs > 0 ? 'in ' + fmtDur(next.timeUntilMs) : fmtDur(Math.abs(next.timeUntilMs)) + ' ago'})
+                          </p>
+                        ) : (
+                          <p className="text-[11px] mb-1.5" style={{ color: '#5eead4' }}>All done for this window</p>
+                        )}
+
+                        {/* Action buttons - only show when next action is within 20min or overdue */}
+                        {(isPastDeadline || isInGracePeriod || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
+                          {isPastDeadline ? (
+                            <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next?.key || 'evening', type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next?.key || 'evening'); }}
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear & Discard</button>
+                          ) : isInGracePeriod ? (
+                            <>
+                              <button onClick={() => { logCrossAction(c.id, 'collect', next?.key || 'afternoon'); setCrossVcsBankPrompt({ crossId: c.id, crossName: cl(c, stocks) }); }}
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                style={{ background: 'rgba(234,179,8,0.12)', color: '#fbbf24', border: '1px solid rgba(234,179,8,0.2)' }}>Collect (late)</button>
+                              <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next?.key || 'evening', type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next?.key || 'evening'); }}
+                                className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Discard</button>
+                            </>
+                          ) : next?.type === 'collect' || next?.type === 'collect_clear' ? (
+                            <>
+                              <button onClick={() => {
+                                if (next.type === 'collect_clear' && v.overnightAt18) {
+                                  setCrossVcsBankPrompt({ crossId: c.id, crossName: cl(c, stocks) });
+                                  setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear', withCollect: true });
+                                } else {
+                                  logCrossAction(c.id, next.type === 'collect_clear' ? 'clear' : 'collect', next.key);
+                                  setCrossVcsBankPrompt({ crossId: c.id, crossName: cl(c, stocks) });
+                                }
+                              }}
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' }}>
+                                {next.type === 'collect_clear' ? 'Collect + Clear' : 'Collected'}
+                              </button>
+                              <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear' }); else logCrossAction(c.id, 'clear', next.key); }}
+                                className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Clear</button>
+                            </>
+                          ) : next?.type === 'clear_discard' ? (
+                            <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear_discard' }); else logCrossAction(c.id, 'clear_discard', next.key); }}
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear + Discard</button>
+                          ) : next?.type === 'clear' ? (
+                            <button onClick={() => { if (v.overnightAt18) setCrossVcs18Confirm({ crossId: c.id, key: next.key, type: 'clear' }); else logCrossAction(c.id, 'clear', next.key); }}
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
+                              Mark Cleared</button>
+                          ) : null}
+                        </div>}
+
+                        {/* 18°C confirmation */}
+                        {crossVcs18Confirm?.crossId === c.id && (
+                          <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+                            <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#a78bfa' }}>Moved to 18°C?</p>
+                            <div className="flex gap-1.5">
+                              <button onClick={() => { logCrossAction(c.id, crossVcs18Confirm.type, crossVcs18Confirm.key, '18'); setCrossVcs18Confirm(null); }}
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>Yes, 18°C</button>
+                              <button onClick={() => { logCrossAction(c.id, crossVcs18Confirm.type, crossVcs18Confirm.key, '25'); setCrossVcs18Confirm(null); }}
+                                className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>No, RT</button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Inline virgin log prompt - logs to cross.virginsCollected */}
+                        {crossVcsBankPrompt?.crossId === c.id && (
+                          <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.15)' }}>
+                            <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#5eead4' }}>Log virgins collected?</p>
+                            <div className="flex gap-1.5">
+                              {[1, 3, 5].map(n => (
+                                <button key={n} onClick={() => {
+                                  const newCount = (c.virginsCollected || 0) + n;
+                                  markEdited(c.id);
+                                  if (newCount >= (virginsPerCross || 5)) {
+                                    setCrosses(p => p.map(x => x.id === c.id ? { ...x, virginsCollected: newCount, status: 'waiting for progeny', waitStartDate: today(), vcs: null } : x));
+                                    toast.add(`${virginsPerCross || 5} virgins collected → waiting for progeny`);
+                                  } else {
+                                    setCrosses(p => p.map(x => x.id === c.id ? { ...x, virginsCollected: newCount } : x));
+                                    toast.add(`+${n} virgin${n > 1 ? 's' : ''} (${newCount}/${virginsPerCross || 5})`);
+                                  }
+                                  setCrossVcsBankPrompt(null);
+                                }}
+                                  className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                                  style={{ background: 'rgba(94,234,212,0.1)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
+                              ))}
+                              <button onClick={() => setCrossVcsBankPrompt(null)}
+                                className="px-3 py-2 text-[12px] rounded-lg cursor-pointer"
+                                style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Skip</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {vcsStocks.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {sorted.map(s => {
+                const v = s.vcs;
+                const status = getVcsStatus(v, now);
+                const actions = computeNextActions(v, now);
+                const next = actions[0];
+                const progress = vcsWindowProgress(v, now);
+                const cycleAt18 = v.lastClearTemp ? v.lastClearTemp === '18' : v.overnightAt18;
+                const deadline = v.lastClearTime ? computeDeadline(v.lastClearTime, cycleAt18) : null;
+                const doneCount = (v.todayActions || []).filter(a => a.type === 'collect').length;
+                const totalCollects = v.collectionsPerDay;
+
+                const borderColor = status === 'red' ? 'rgba(239,68,68,0.3)' : status === 'yellow' ? 'rgba(234,179,8,0.3)' : 'rgba(94,234,212,0.2)';
+                const dotColor = status === 'red' ? '#ef4444' : status === 'yellow' ? '#eab308' : '#5eead4';
+
+                function logAction(type, key, temp) {
+                  const action = { type, key, time: new Date().toISOString(), scheduled: next?.scheduled || '' };
+                  const newActions = [...(v.todayActions || []), action];
+                  let newVcs = { ...v, todayActions: newActions };
+                  if (type === 'clear' || type === 'clear_discard') {
+                    newVcs.lastClearTime = action.time;
+                    newVcs.lastClearTemp = temp || (v.overnightAt18 ? '18' : '25');
+                    newVcs.virginDeadline = computeDeadline(action.time, newVcs.lastClearTemp === '18');
+                    newVcs.todayActions = [action]; // Reset for new window
+                  }
+                  markEdited(s.id);
+                  setStocks(p => p.map(st => st.id === s.id ? { ...st, vcs: newVcs } : st));
+                  const msgs = { collect: 'Collected', clear: v.overnightAt18 ? 'Cleared → 18°C' : 'Cleared', clear_discard: 'Cleared & discarded' };
+                  toast.add(`${s.name}: ${msgs[type] || 'Done'}`);
+                }
+
+                const isInGracePeriod = next?.isInGracePeriod || (deadline && now > new Date(deadline) && now <= new Date(new Date(deadline).getTime() + 30 * 60000));
+                const isPastDeadline = next?.isPastDeadline || (deadline && now > new Date(new Date(deadline).getTime() + 30 * 60000));
+
+                return (
+                  <div key={s.id} className="card p-3 cursor-pointer" style={{ border: `1px solid ${borderColor}` }} onClick={() => setHomeEditStock({ ...s })}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />
+                        <p className="text-xs font-bold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                      </div>
+                      <span className="text-[9px] shrink-0 ml-2" style={{ color: 'var(--text-3)' }}>{v.overnightAt18 ? '18°C' : '25°C'} · {v.collectionsPerDay}× · {doneCount}/{totalCollects}</span>
+                      <button onClick={(e) => { e.stopPropagation(); setPrintListVirgins(p => p.includes(s.id) ? p.filter(x => x !== s.id) : [...p, s.id]); toast.add(printListVirgins.includes(s.id) ? 'Removed virgin label' : 'Added virgin label'); }}
+                        className="p-1 rounded-md transition-all active:scale-90 cursor-pointer shrink-0 ml-1" title="Print virgin label"
+                        style={{ color: printListVirgins.includes(s.id) ? '#5eead4' : 'var(--text-3)', background: 'transparent' }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                      </button>
+                    </div>
+
+                    {/* Progress bar */}
+                    {v.lastClearTime && (
+                      <div className="mb-1.5">
+                        <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+                          <div className="h-full rounded-full transition-all" style={{
+                            width: `${Math.min(100, progress * 100)}%`,
+                            background: progress > 0.9 ? '#ef4444' : progress > 0.7 ? '#eab308' : '#5eead4'
+                          }} />
+                        </div>
+                        <div className="flex justify-between mt-0.5">
+                          <span className="text-[9px]" style={{ color: 'var(--text-3)' }}>Cleared {fmtTime(v.lastClearTime)}</span>
+                          <span className="text-[9px]" style={{ color: progress > 0.9 ? '#ef4444' : 'var(--text-3)' }}>{next ? 'Next ' + fmtTime(next.suggestedTime) : (deadline ? 'Expires ' + fmtTime(deadline) : '--')}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Status message */}
+                    {isPastDeadline ? (
+                      <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#ef4444' }}>Expired - clear & discard</p>
+                    ) : isInGracePeriod ? (
+                      <p className="text-[11px] font-semibold mb-1.5" style={{ color: '#eab308' }}>LATE - collect now or discard</p>
+                    ) : next && next.timeUntilMs > 2 * 3600000 ? (
+                      <p className="text-[11px] mb-1.5" style={{ color: '#5eead4' }}>Done for now - next: {fmtTime(next.suggestedTime)}</p>
+                    ) : next ? (
+                      <p className="text-[11px] mb-1.5" style={{ color: next.isOverdue ? '#ef4444' : next.timeUntilMs < 30 * 60000 ? '#eab308' : 'var(--text-2)' }}>
+                        {next.isOverdue ? 'OVERDUE: ' : ''}{next.label} - {fmtTime(next.suggestedTime)} ({next.timeUntilMs > 0 ? 'in ' + fmtDur(next.timeUntilMs) : fmtDur(Math.abs(next.timeUntilMs)) + ' ago'})
+                      </p>
+                    ) : (
+                      <p className="text-[11px] mb-1.5" style={{ color: '#5eead4' }}>All done for this window</p>
+                    )}
+
+                    {/* Action buttons - only show when next action is within 20min or overdue */}
+                    {(isPastDeadline || isInGracePeriod || (next && next.timeUntilMs <= 20 * 60000)) && <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
+                      {isPastDeadline ? (
+                        <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next?.key || 'evening', type: 'clear_discard' }); else logAction('clear_discard', next?.key || 'evening'); }}
+                          className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear & Discard</button>
+                      ) : isInGracePeriod ? (
+                        <>
+                          <button onClick={() => { logAction('collect', next?.key || 'afternoon'); setVcsBankPrompt({ stockId: s.id, stockName: s.name }); }}
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'rgba(234,179,8,0.12)', color: '#fbbf24', border: '1px solid rgba(234,179,8,0.2)' }}>Collect (late)</button>
+                          <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next?.key || 'evening', type: 'clear_discard' }); else logAction('clear_discard', next?.key || 'evening'); }}
+                            className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Discard</button>
+                        </>
+                      ) : next?.type === 'collect' || next?.type === 'collect_clear' ? (
+                        <>
+                          <button onClick={() => {
+                            if (next.type === 'collect_clear' && v.overnightAt18) {
+                              setVcsBankPrompt({ stockId: s.id, stockName: s.name });
+                              setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear', withCollect: true });
+                            } else {
+                              logAction(next.type === 'collect_clear' ? 'clear' : 'collect', next.key);
+                              setVcsBankPrompt({ stockId: s.id, stockName: s.name });
+                            }
+                          }}
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' }}>
+                            {next.type === 'collect_clear' ? 'Collect + Clear' : 'Collected ✓'}
+                          </button>
+                          <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear' }); else logAction('clear', next.key); }}
+                            className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Clear</button>
+                        </>
+                      ) : next?.type === 'clear_discard' ? (
+                        <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear_discard' }); else logAction('clear_discard', next.key); }}
+                          className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Clear + Discard</button>
+                      ) : next?.type === 'clear' ? (
+                        <button onClick={() => { if (v.overnightAt18) setVcs18Confirm({ stockId: s.id, key: next.key, type: 'clear' }); else logAction('clear', next.key); }}
+                          className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                          style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
+                          Mark Cleared</button>
+                      ) : null}
+                    </div>}
+
+                    {/* 18°C confirmation */}
+                    {vcs18Confirm?.stockId === s.id && (
+                      <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+                        <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#a78bfa' }}>Moved to 18°C?</p>
+                        <div className="flex gap-1.5">
+                          <button onClick={() => { logAction(vcs18Confirm.type, vcs18Confirm.key, '18'); setVcs18Confirm(null); }}
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>Yes, 18°C</button>
+                          <button onClick={() => { logAction(vcs18Confirm.type, vcs18Confirm.key, '25'); setVcs18Confirm(null); }}
+                            className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>No, RT</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Inline virgin bank prompt */}
+                    {vcsBankPrompt?.stockId === s.id && (
+                      <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.15)' }}>
+                        <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#5eead4' }}>Log virgins to bank?</p>
+                        <div className="flex gap-1.5">
+                          {[1, 3, 5].map(n => (
+                            <button key={n} onClick={() => {
+                              setVirginBank(prev => ({ ...prev, [s.id]: (prev[s.id] || 0) + n }));
+                              toast.add(`+${n} virgins banked for ${s.name}`);
+                              setVcsBankPrompt(null);
+                            }}
+                              className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                              style={{ background: 'rgba(94,234,212,0.1)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
+                          ))}
+                          <button onClick={() => setVcsBankPrompt(null)}
+                            className="px-3 py-2 text-[12px] rounded-lg cursor-pointer"
+                            style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Skip</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>}
+          </div>
+        );
+      })()}
+
+
+      {/* Onboarding */}
+      {stocks.length === 0 && crosses.length === 0 && (
+        <div className="card p-8 mb-6 text-center">
+          <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{ background: 'var(--accent-glow-2)', border: '1px solid rgba(139,92,246,0.15)' }}>
+            <span className="text-3xl">🪰</span>
+          </div>
+          <p className="text-base font-bold mb-2" style={{ color: 'var(--text-1)' }}>Welcome to Flomington</p>
+          <p className="text-sm mb-1" style={{ color: 'var(--text-3)' }}>Add your fly stocks first, then start crossing.</p>
+          <p className="text-xs mb-5" style={{ color: 'var(--text-3)' }}>Or load demo data from Settings.</p>
+        </div>
+      )}
+
+      {/* Active Crosses */}
+      {activeCrosses.length > 0 && (
+        <div ref={activeRef} className="mb-8">
+          <p className="section-header">Active Crosses</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {activeCrosses.map(c => (
+              <CrossCard key={c.id} cross={c} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} forceOpen={selectedCrossId && (selectedCrossId === c.id || c.id.startsWith(selectedCrossId))} currentUser={currentUser} onTransfer={onTransfer} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} expBank={expBank} setExpBank={setExpBank} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Stock Collections - show categories with stocks due for flipping */}
+      {(() => {
+        // Individual stocks: expanded + "No Collection" (only show if maintainer matches)
+        const myStocks = stocks.filter(s => (!s.maintainer || s.maintainer === currentUser) && !stockTags(s).includes('Dead'));
+        const dueIndividual = myStocks.filter(s => (s.category || 'No Collection') === 'No Collection').filter(s => {
+          const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
+          return age !== null && age >= getFlipDays(s);
+        });
+        // Group collections by (cat, copies) - each copy number flips independently
+        const dueGroups = [];
+        STOCK_CATS.filter(cat => cat !== 'No Collection').forEach(cat => {
+          const catStocks = myStocks.filter(s => (s.category || 'No Collection') === cat);
+          const copyNums = [...new Set(catStocks.map(s => Number(s.copies) || 1))].sort((a, b) => a - b);
+          copyNums.forEach(cn => {
+            const group = catStocks.filter(s => (Number(s.copies) || 1) === cn);
+            const dueCount = group.filter(s => {
+              const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
+              return age !== null && age >= getFlipDays(s);
+            }).length;
+            if (dueCount > 0) dueGroups.push({ cat, copies: cn, stocks: group, dueCount, total: group.length });
+          });
+        });
+        if (dueIndividual.length === 0 && dueGroups.length === 0) return null;
+        return (
+          <div ref={healthRef} className="mb-8">
+            <p className="section-header">Stocks Due for Flipping</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {dueIndividual.map(s => (
+                <div key={s.id} className="card p-4 cursor-pointer" style={{ borderColor: 'rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.04)' }} onClick={() => setHomeEditStock({ ...s })}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                        {((s.copies || 1) > 1 || myStocks.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'))) && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>#{s.copies || 1}</span>}
+                      </div>
+                      <p className="text-xs mt-0.5" style={{ color: '#fca5a5' }}>{-dFromNow(s.lastFlipped || s.createdAt)}d - needs flip</p>
+                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); flipStock(s.id); }}
+                      className="touch px-4 py-2 text-sm font-semibold rounded-xl transition-all active:scale-95 shrink-0"
+                      style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
+                      Flip
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {dueGroups.map(g => (
+                <div key={`${g.cat}-${g.copies}`} className="card p-5 cursor-pointer" style={{ borderColor: 'rgba(239,68,68,0.1)' }} onClick={() => { setFlipCat({ cat: g.cat, copies: g.copies }); setFlipDate(today()); }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{g.cat}{g.copies > 1 || dueGroups.filter(x => x.cat === g.cat).length > 1 ? ` #${g.copies}` : ''}</p>
+                      <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>{g.total} stock{g.total !== 1 ? 's' : ''}</p>
+                    </div>
+                    <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
+                      {g.dueCount} to flip
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Completed */}
+      {completedCrosses.length > 0 && (
+        <div className="mb-6">
+          <button onClick={() => setShowCompleted(!showCompleted)}
+            className="text-xs font-medium touch w-full text-left py-2" style={{ color: 'var(--text-3)' }}>
+            {showCompleted ? '▾' : '▸'} {completedCrosses.length} completed
+          </button>
+          {showCompleted && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mt-2">
+              {completedCrosses.map(c => (
+                <CrossCard key={c.id} cross={c} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} expBank={expBank} setExpBank={setExpBank} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+
+      {/* Flip date modal for stock collections */}
+      <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${typeof flipCat === 'object' ? flipCat?.cat : flipCat} - Flip`}>
+        {flipCat && (() => {
+          const fc = typeof flipCat === 'object' ? flipCat : { cat: flipCat, copies: null };
+          const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || Number(s.copies || 1) === fc.copies));
+          const dueStocks = catStocks.filter(s => {
+            if (stockTags(s).includes('Dead')) return false;
+            const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
+            return age !== null && age >= getFlipDays(s);
+          }).sort((a, b) => {
+            const aa = -(a.lastFlipped || a.createdAt ? dFromNow(a.lastFlipped || a.createdAt) : 0);
+            const bb = -(b.lastFlipped || b.createdAt ? dFromNow(b.lastFlipped || b.createdAt) : 0);
+            return bb - aa;
+          });
+          const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` #${fc.copies}` : '');
+          return (
+            <div>
+              {dueStocks.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: '#fca5a5' }}>{dueStocks.length} stock{dueStocks.length !== 1 ? 's' : ''} due</p>
+                  <div className="space-y-1.5" style={{ maxHeight: '240px', overflowY: 'auto' }}>
+                    {dueStocks.map(s => {
+                      const age = -dFromNow(s.lastFlipped || s.createdAt);
+                      return (
+                        <div key={s.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: 'rgba(239,68,68,0.04)', border: '1px solid rgba(239,68,68,0.1)' }}>
+                          <button onClick={() => { setFlipCat(null); setHomeEditStock({ ...s }); }}
+                            className="text-left flex-1 min-w-0" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-sm font-medium truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                              {((s.copies || 1) > 1 || catStocks.some(x => x.id !== s.id && x.name === s.name)) && <span className="badge text-[10px]" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>#{s.copies || 1}</span>}
+                            </div>
+                            <p className="text-[11px]" style={{ color: '#fca5a5' }}>{age}d / {getFlipDays(s)}d</p>
+                          </button>
+                          <button onClick={() => { flipStock(s.id); }}
+                            className="touch px-3 py-1 text-xs font-semibold rounded-lg transition-all active:scale-95 shrink-0 ml-2"
+                            style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
+                            Flip
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <Field label="Or set date for all">
+                <Inp type="date" value={flipDate} onChange={e => setFlipDate(e.target.value)} />
+              </Field>
+              <div className="flex gap-2 mt-2">
+                <Btn onClick={() => {
+                  const ids = new Set(catStocks.map(s => s.id));
+                  ids.forEach(id => markEdited(id));
+                  setStocks(p => p.map(s => ids.has(s.id) ? { ...s, lastFlipped: flipDate } : s));
+                  toast.add(`${label} flipped on ${fmt(flipDate)}`);
+                  setFlipCat(null);
+                }} className="flex-1">Set All Flipped</Btn>
+                <Btn v="s" onClick={() => setFlipCat(null)}>Cancel</Btn>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+      <StockModal stock={homeEditStock} onClose={() => setHomeEditStock(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={() => {}} STOCK_CATS={STOCK_CATS} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} expBank={expBank} setExpBank={setExpBank} />
+    </div>
+  );
+}
+
+/* ========== STOCKS SCREEN ========== */
+function StocksScreen({ stocks, setStocks, crosses, toast, currentUser, onTransfer, STOCK_CATS, setCollections, virginBank, setVirginBank, initialStockId, printList, setPrintList, printListCrosses, printListVirgins, printListExps, onOpenPrint, onBulkActive, expBank, setExpBank }) {
+  const [search, setSearch] = useState('');
+  const [catFilter, setCatFilter] = useState(() => initialStockId ? 'all' : 'all');
+  const [showAll, setShowAll] = useState(() => !!initialStockId);
+  const [accessDenied, setAccessDenied] = useState(null);
+  const [editing, setEditing] = useState(() => {
+    if (initialStockId) {
+      const s = stocks.find(x => x.id === initialStockId || x.id.startsWith(initialStockId));
+      return s ? { ...s } : null;
+    }
+    return null;
+  });
+  const [deleting, setDeleting] = useState(null);
+  const [flipCat, setFlipCat] = useState(null);
+  const [flipDate, setFlipDate] = useState('');
+  const [addingCat, setAddingCat] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [collectionDetail, setCollectionDetail] = useState(null);
+  const [massAdding, setMassAdding] = useState(false);
+  const [massAddText, setMassAddText] = useState('');
+  const [massAddCat, setMassAddCat] = useState('No Collection');
+  const [massAddLoc, setMassAddLoc] = useState('25inc');
+  const [sortBy, setSortBy] = useLS('flo-sort', 'nextFlip');
+  const [copyFilter, setCopyFilter] = useState('all');
+
+  const copyNumbers = useMemo(() => [...new Set(stocks.map(s => Number(s.copies) || 1))].sort((a, b) => a - b), [stocks]);
+  const hasCopies = copyNumbers.some(n => n > 1);
+
+  const filtered = useMemo(() => {
+    let result = stocks;
+    if (!showAll) result = result.filter(s => s.maintainer === currentUser);
+    if (catFilter === 'expanded') {
+      result = result.filter(s => (s.variant || 'stock') === 'expanded');
+    } else if (catFilter !== 'all') {
+      result = result.filter(s => (s.category || 'No Collection') === catFilter);
+    }
+    if (copyFilter !== 'all') result = result.filter(s => Number(s.copies || 1) === Number(copyFilter));
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(s => [s.name, s.genotype || '', s.notes || '', s.sourceId || '', s.flybaseId || '', s.janeliaLine || '', s.source || '', s.giftFrom || '', s.category || ''].some(x => x.toLowerCase().includes(q)));
+    }
+    result = [...result].sort((a, b) => {
+      if (sortBy === 'alpha') return (a.name || '').localeCompare(b.name || '');
+      if (sortBy === 'added') return (b.createdAt || '').localeCompare(a.createdAt || '');
+      // nextFlip: most urgent first (highest age/flipDays ratio)
+      const ra = a.lastFlipped ? -dFromNow(a.lastFlipped) / getFlipDays(a) : 0;
+      const rb = b.lastFlipped ? -dFromNow(b.lastFlipped) / getFlipDays(b) : 0;
+      return rb - ra;
+    });
+    return result;
+  }, [stocks, search, catFilter, showAll, currentUser, sortBy, copyFilter]);
+
+  function flipStock(id) {
+    markEdited(id);
+    setStocks(p => p.map(s => s.id === id ? { ...s, lastFlipped: today() } : s));
+    toast.add('Flipped');
+  }
+
+  function doDelete() {
+    const s = stocks.find(x => x.id === deleting);
+    markDeleted(deleting);
+    supabaseDeleteNow('stocks', deleting);
+    setStocks(p => p.filter(x => x.id !== deleting));
+    setDeleting(null);
+    if (s) toast.add(`Deleted "${s.name}"`, () => { _deletedIds.delete(s.id); setStocks(p => [...p, s]); });
+  }
+
+  // Multi-select
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [bulkAction, setBulkAction] = useState(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkAppendText, setBulkAppendText] = useState('');
+  const [bulkFlipDate, setBulkFlipDate] = useState('');
+
+  useEffect(() => { if (!selectMode) setSelected(new Set()); }, [selectMode]);
+  useEffect(() => { setSelected(new Set()); }, [catFilter, showAll, search]);
+  useEffect(() => () => onBulkActive?.(false), []);
+
+  function toggleSelect(id) {
+    setSelected(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+  function selectAll() {
+    setSelected(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id)));
+  }
+  function exitSelect() { setSelectMode(false); onBulkActive?.(false); }
+  function bulkFlip() {
+    selected.forEach(id => markEdited(id));
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, lastFlipped: today() } : s));
+    toast.add(`Flipped ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    exitSelect();
+  }
+  function bulkSetFlipDate(d) {
+    selected.forEach(id => markEdited(id));
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, lastFlipped: d } : s));
+    toast.add(`Set flip date on ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    setBulkAction(null);
+    exitSelect();
+  }
+  function bulkDeleteConfirmed() {
+    const ids = selected;
+    const removed = stocks.filter(s => ids.has(s.id));
+    ids.forEach(id => { markDeleted(id); supabaseDeleteNow('stocks', id); });
+    setStocks(p => p.filter(s => !ids.has(s.id)));
+    toast.add(`Deleted ${ids.size} stock${ids.size > 1 ? 's' : ''}`, () => { removed.forEach(s => _deletedIds.delete(s.id)); setStocks(p => [...p, ...removed]); });
+    setBulkDeleting(false);
+    exitSelect();
+  }
+  function bulkCopy() {
+    setStocks(p => {
+      const newStocks = [];
+      p.forEach(s => {
+        if (selected.has(s.id)) {
+          const maxCopy = Math.max(...p.filter(x => x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection')).map(x => x.copies || 1));
+          const newId = uid();
+          markEdited(newId);
+          newStocks.push({ ...s, id: newId, copies: maxCopy + 1, createdAt: today(), lastFlipped: today() });
+        }
+      });
+      return [...p, ...newStocks];
+    });
+    toast.add(`Copied ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    exitSelect();
+  }
+  function bulkMoveCollection(cat) {
+    selected.forEach(id => markEdited(id));
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, category: cat } : s));
+    toast.add(`Moved ${selected.size} to ${cat}`);
+    setBulkAction(null);
+    exitSelect();
+  }
+  function bulkChangeMaintainer(user) {
+    selected.forEach(id => markEdited(id));
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, maintainer: user } : s));
+    toast.add(`${user} assigned to ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    setBulkAction(null);
+    exitSelect();
+  }
+  function bulkAppend(text) {
+    if (!text.trim()) return;
+    selected.forEach(id => markEdited(id));
+    setStocks(p => p.map(s => selected.has(s.id) ? { ...s, name: s.name + text } : s));
+    toast.add(`Appended text to ${selected.size} stock${selected.size > 1 ? 's' : ''}`);
+    setBulkAction(null);
+    exitSelect();
+  }
+  function bulkPrint() {
+    const ids = [...selected];
+    setPrintList(p => [...new Set([...p, ...ids])]);
+    toast.add(`Added ${ids.length} to print list`);
+    exitSelect();
+  }
+
+  return (
+    <div>
+      {/* Search bar */}
+      <div className="flex gap-2 mb-3">
+        <Inp placeholder={catFilter === 'all' ? 'Search all stocks...' : `Search ${catFilter}...`} value={search} onChange={e => setSearch(e.target.value)} className="flex-1" />
+      </div>
+
+      {/* Toolbar row */}
+      <div className="flex items-center gap-2 mb-3">
+        {/* Mine / All segmented control */}
+        <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
+          <button onClick={() => setShowAll(false)}
+            className="px-3 py-2 text-[12px] font-semibold transition-all active:scale-95"
+            style={!showAll
+              ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }
+              : { background: 'var(--surface-2)', color: 'var(--text-3)' }
+            }>Mine</button>
+          <button onClick={() => setShowAll(true)}
+            className="px-3 py-2 text-[12px] font-semibold transition-all active:scale-95"
+            style={{ borderLeft: '1px solid var(--border)',
+              ...(showAll
+                ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }
+                : { background: 'var(--surface-2)', color: 'var(--text-3)' })
+            }}>All</button>
+        </div>
+        {/* Sort */}
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+          className="compact px-2 py-1.5 font-semibold rounded-lg shrink-0"
+          style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', appearance: 'auto', maxWidth: '90px' }}>
+          <option value="nextFlip">Flip</option>
+          <option value="added">Added</option>
+          <option value="alpha">A–Z</option>
+        </select>
+        {hasCopies && <select value={copyFilter} onChange={e => setCopyFilter(e.target.value)}
+          className="compact px-2 py-1.5 font-semibold rounded-lg shrink-0"
+          style={{ color: copyFilter !== 'all' ? '#93c5fd' : 'var(--text-3)', border: copyFilter !== 'all' ? '1px solid rgba(59,130,246,0.3)' : '1px solid var(--border)', background: copyFilter !== 'all' ? 'rgba(59,130,246,0.1)' : 'var(--surface-2)', appearance: 'auto', maxWidth: '70px' }}>
+          <option value="all">Copy</option>
+          {copyNumbers.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>}
+        <div className="flex-1" />
+        {/* Print */}
+        {(() => { const totalPrint = printList.length + (printListCrosses || []).length + (printListVirgins || []).length + (printListExps || []).length; return (
+        <button onClick={onOpenPrint} title={`Print labels${totalPrint > 0 ? ` (${totalPrint})` : ''}`}
+          className="relative flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
+          style={{ background: totalPrint > 0 ? 'rgba(0,128,128,0.12)' : 'var(--surface-2)', color: totalPrint > 0 ? '#5eead4' : 'var(--text-3)', border: totalPrint > 0 ? '1px solid rgba(0,128,128,0.2)' : '1px solid var(--border)' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          {totalPrint > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center" style={{ background: '#5eead4', color: '#09090b' }}>{totalPrint}</span>}
+        </button>); })()}
+        {/* Select */}
+        <button onClick={() => { setSelectMode(m => { const next = !m; onBulkActive?.(next); return next; }); }} title="Multi-select"
+          className="flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
+          style={selectMode
+            ? { background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }
+            : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
+          }>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>{selectMode && <polyline points="9 11 12 14 22 4"/>}
+          </svg>
+        </button>
+        {/* Add */}
+        <button onClick={() => setEditing({ id: null, name: '', genotype: '', category: catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter, location: '25inc', notes: '', variant: catFilter === 'expanded' ? 'expanded' : 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser, copies: 1 })} title="Add new stock"
+          className="flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95 shrink-0"
+          style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+      </div>
+
+      {/* Collection filter chips */}
+      <div className="flex gap-1.5 mb-4 overflow-x-auto pb-2" style={{ WebkitOverflowScrolling: 'touch', position: 'relative', zIndex: 5 }}>
+        {['all', 'expanded', ...STOCK_CATS].map(cat => (
+          <button key={cat} onClick={() => setCatFilter(cat)}
+            className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+            style={catFilter === cat
+              ? { background: 'rgba(0,128,128,0.15)', color: '#5eead4', border: '1px solid rgba(0,128,128,0.3)' }
+              : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
+            }>{cat === 'all' ? 'All' : cat === 'expanded' ? 'Exp' : cat}</button>
+        ))}
+        <button onClick={() => { setAddingCat(true); setNewCatName(''); }}
+          className="px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+          style={{ background: 'var(--surface-2)', color: 'var(--accent-2)', border: '1px solid var(--border)' }}>+</button>
+      </div>
+
+      {catFilter !== 'all' && catFilter !== 'expanded' && catFilter !== 'No Collection' && filtered.length > 0 && (() => {
+        const dueCount = filtered.filter(s => {
+          const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
+          return age !== null && age >= getFlipDays(s);
+        }).length;
+        const label = catFilter;
+        const allStocksInCat = stocks.filter(s => (s.category || 'No Collection') === catFilter);
+        const maintainers = [...new Set(allStocksInCat.map(s => s.maintainer).filter(Boolean))];
+        const collMaintainer = maintainers.length === 1 ? maintainers[0] : null;
+        return (
+          <div className="card p-4 mb-5 cursor-pointer" onClick={() => setCollectionDetail(catFilter)}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{label}</p>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>
+                  {filtered.length} stock{filtered.length !== 1 ? 's' : ''}{dueCount > 0 ? ` · ${dueCount} due` : ''}
+                  {collMaintainer ? ` · ${collMaintainer}` : maintainers.length > 1 ? ` · mixed` : ''}
+                </p>
+              </div>
+              <span className="badge" style={{ background: dueCount > 0 ? 'rgba(239,68,68,0.1)' : 'var(--surface-2)', color: dueCount > 0 ? '#fca5a5' : 'var(--text-3)', border: dueCount > 0 ? '1px solid rgba(239,68,68,0.15)' : '1px solid var(--border)' }}>
+                {dueCount > 0 ? `${dueCount} to flip` : 'Flip All'}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
+      {filtered.length === 0 ? (
+        <div className="text-center py-16"><p className="text-sm" style={{ color: 'var(--text-3)' }}>{stocks.length ? 'No matches' : 'No stocks yet'}</p></div>
+      ) : (
+        <>
+          {(() => {
+            const groups = [];
+            const expandedStocks = filtered.filter(s => (s.variant || 'stock') === 'expanded');
+            if (expandedStocks.length > 0) groups.push({ label: 'Expanded', items: expandedStocks });
+            STOCK_CATS.forEach(cat => {
+              const catStocks = filtered.filter(s => (s.variant || 'stock') !== 'expanded' && (s.category || 'No Collection') === cat);
+              if (catStocks.length > 0) groups.push({ label: cat, items: catStocks });
+            });
+            return groups.map(({ label, items }) => (
+              <div key={label} className="mb-8">
+                <p className="section-header">{label}</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {items.map(s => {
+                    const isMine = !s.maintainer || s.maintainer === currentUser;
+                    const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
+                    const flipDays = getFlipDays(s);
+                    const needsFlip = isMine && age !== null && age >= flipDays;
+                    const nearFlip = isMine && age !== null && !needsFlip && age / flipDays >= 0.8;
+                    const tags = stockTags(s);
+                    return (
+                      <div key={s.id} className="card p-4" style={{
+                        ...(needsFlip ? { borderColor: 'rgba(239,68,68,0.15)', background: 'rgba(239,68,68,0.06)' } : nearFlip ? { borderColor: 'rgba(245,158,11,0.15)', background: 'rgba(245,158,11,0.06)' } : {}),
+                        ...(selectMode && selected.has(s.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-glow-2)', boxShadow: '0 0 20px var(--accent-glow-2)' } : {}),
+                      }} onClick={() => selectMode ? toggleSelect(s.id) : setEditing({ ...s })}>
+                        <div className="flex items-start gap-3">
+                          {selectMode && (
+                            <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 transition-all"
+                              style={selected.has(s.id)
+                                ? { background: 'var(--accent)', border: '1px solid var(--accent)' }
+                                : { background: 'var(--surface)', border: '1px solid var(--border-2)' }}>
+                              {selected.has(s.id) && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                              <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
+                              <TagBadges tags={tags} limit={isTouchDevice() ? 2 : undefined} />
+
+                              {((s.copies || 1) > 1 || filtered.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'))) && <span className="badge" style={{ background: 'rgba(59,130,246,0.1)', color: '#93c5fd' }}>#{s.copies || 1}</span>}
+                            </div>
+                            {s.genotype && s.genotype !== '+' && <p className="text-xs mono truncate" style={{ color: 'rgba(167,139,250,0.35)' }}>{s.genotype}</p>}
+                            {isMine && age !== null && (
+                              <div className="mt-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-xs" style={{ color: needsFlip ? '#fca5a5' : nearFlip ? '#fcd34d' : 'var(--text-3)', fontWeight: (needsFlip || nearFlip) ? 500 : 400 }}>
+                                    {needsFlip ? `${age}d - needs flip` : `${age}d / ${flipDays}d`}
+                                  </p>
+                                  <p className="text-xs" style={{ color: 'var(--text-3)' }}>{Math.min(Math.round((age / flipDays) * 100), 100)}%</p>
+                                </div>
+                                <div className="w-full rounded-full overflow-hidden" style={{ height: '4px', background: 'rgba(255,255,255,0.06)' }}>
+                                  <div className="h-full rounded-full transition-all" style={{
+                                    width: `${Math.min((age / flipDays) * 100, 100)}%`,
+                                    background: needsFlip
+                                      ? 'linear-gradient(90deg, #ef4444, #fca5a5)'
+                                      : nearFlip
+                                        ? 'linear-gradient(90deg, #f59e0b, #fcd34d)'
+                                        : 'linear-gradient(90deg, #008080, #8a9a5b)',
+                                  }} />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          {!selectMode && isMine && needsFlip && (
+                            <button onClick={e => { e.stopPropagation(); flipStock(s.id); }}
+                              className="touch px-4 py-2 text-sm font-semibold rounded-xl transition-all active:scale-95 shrink-0"
+                              style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>
+                              Flip
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ));
+          })()}
+        </>
+      )}
+
+      <StockModal stock={editing} onClose={() => setEditing(null)} stocks={stocks} setStocks={setStocks} toast={toast} onDelete={id => { setEditing(null); setDeleting(id); }} STOCK_CATS={STOCK_CATS} setCollections={setCollections} currentUser={currentUser} onTransfer={onTransfer} virginBank={virginBank} setVirginBank={setVirginBank} printList={printList} setPrintList={setPrintList} onMassAdd={() => { setEditing(null); setMassAdding(true); setMassAddText(''); setMassAddCat(catFilter === 'all' || catFilter === 'expanded' ? 'No Collection' : catFilter); setMassAddLoc('25inc'); }} expBank={expBank} setExpBank={setExpBank} />
+      <Confirm open={!!deleting} onOk={doDelete} onNo={() => setDeleting(null)} title="Delete stock?" msg={(() => {
+        const affectedCrosses = (crosses || []).filter(c => c.status !== 'done' && (c.parentA === deleting || c.parentB === deleting));
+        if (affectedCrosses.length > 0) return `This stock is used in ${affectedCrosses.length} active cross${affectedCrosses.length > 1 ? 'es' : ''}. Deleting it will leave ${affectedCrosses.length > 1 ? 'those crosses' : 'that cross'} with a missing parent. This stock will be permanently removed.`;
+        return 'This stock will be permanently removed.';
+      })()} />
+
+      {/* Mass add stocks modal */}
+      <Modal open={massAdding} onClose={() => setMassAdding(false)} title="Mass Add Stocks">
+        {(() => {
+          const lines = massAddText.split('\n').map(l => l.trim()).filter(Boolean);
+          const count = lines.length;
+          return (
+            <div>
+              <Field label="Stock names (one per line)">
+                <Txt value={massAddText} onChange={e => setMassAddText(e.target.value)} rows={6} placeholder={"BL79039\nOregon-R\nVDRC 110620\nw1118"} autoFocus={!isTouchDevice()} />
+              </Field>
+              <Field label="Collection">
+                <select value={massAddCat} onChange={e => {
+                  if (e.target.value === '__new__') {
+                    const name = prompt('New collection name:');
+                    if (name && name.trim() && !STOCK_CATS.includes(name.trim())) {
+                      const n = name.trim();
+                      const idx = STOCK_CATS.indexOf('No Collection');
+                      const next = [...STOCK_CATS];
+                      if (idx >= 0) next.splice(idx, 0, n); else next.push(n);
+                      setCollections(next);
+                      setMassAddCat(n);
+                    }
+                  } else { setMassAddCat(e.target.value); }
+                }} className="w-full px-4 py-3 text-sm rounded-xl" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>
+                  {STOCK_CATS.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                  <option value="__new__">+ New Collection</option>
+                </select>
+              </Field>
+              <Field label="Location">
+                <div className="grid grid-cols-2 gap-2">
+                  {TEMPS.map(t => (
+                    <div key={t} onClick={() => setMassAddLoc(t)} className={`loc-card ${massAddLoc === t ? 'selected' : ''}`}>
+                      <div className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>{tempFull(t)}</div>
+                    </div>
+                  ))}
+                </div>
+              </Field>
+              {count > 0 && (
+                <p className="text-xs mb-3" style={{ color: 'var(--accent-2)' }}>{count} stock{count !== 1 ? 's' : ''} will be added</p>
+              )}
+              <Btn onClick={() => {
+                if (count === 0) return;
+                const newStocks = lines.map(name => {
+                  const s = { id: uid(), name, genotype: '', category: massAddCat, location: massAddLoc, notes: '', variant: 'stock', lastFlipped: today(), createdAt: today(), maintainer: currentUser, copies: 1 };
+                  markEdited(s.id);
+                  const g = guessSource(name);
+                  if (g) {
+                    s.source = g.source;
+                    s.sourceId = g.sourceId;
+                    if (g.source === 'Bloomington' && g.sourceId) s.flybaseId = `FBst${g.sourceId.replace(/\D/g, '').padStart(7, '0')}`;
+                  }
+                  return s;
+                });
+                setStocks(p => [...p, ...newStocks]);
+                toast.add(`Added ${count} stock${count !== 1 ? 's' : ''}`);
+                setMassAdding(false);
+              }} className="w-full" disabled={count === 0}>Add {count || ''} Stock{count !== 1 ? 's' : ''}</Btn>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* Access denied for deep link */}
+      <Modal open={!!accessDenied} onClose={() => setAccessDenied(null)} title="Access Denied">
+        <p className="text-sm mb-4" style={{ color: 'var(--text-2)' }}>The stock "{accessDenied}" is maintained by another user. Switch to the correct account to view it.</p>
+        <Btn v="s" onClick={() => setAccessDenied(null)} className="w-full">Close</Btn>
+      </Modal>
+
+      {/* Collection detail modal */}
+      <Modal open={!!collectionDetail} onClose={() => setCollectionDetail(null)} title={collectionDetail || ''}>
+        {collectionDetail && (() => {
+          const allInCat = stocks.filter(s => (s.category || 'No Collection') === collectionDetail);
+          const mains = [...new Set(allInCat.map(s => s.maintainer).filter(Boolean))];
+          const cm = mains.length === 1 ? mains[0] : null;
+          const noMaint = allInCat.some(s => !s.maintainer);
+          const dueCount = allInCat.filter(s => {
+            const age = s.lastFlipped || s.createdAt ? -dFromNow(s.lastFlipped || s.createdAt) : null;
+            return age !== null && age >= getFlipDays(s);
+          }).length;
+          return (
+            <div>
+              <p className="text-xs mb-4" style={{ color: 'var(--text-3)' }}>
+                {allInCat.length} stock{allInCat.length !== 1 ? 's' : ''}{dueCount > 0 ? ` · ${dueCount} due for flipping` : ''}
+                {cm ? ` · Maintainer: ${cm}` : mains.length > 1 ? ` · Mixed maintainers` : ' · No maintainer'}
+              </p>
+
+              <Btn onClick={() => { setFlipCat(collectionDetail); setFlipDate(today()); setCollectionDetail(null); }} className="w-full mb-4">
+                {dueCount > 0 ? `Flip All (${dueCount} due)` : 'Set All Flipped'}
+              </Btn>
+
+              {(noMaint || !cm) && (
+                <div className="mb-4">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: 'var(--text-3)' }}>Assign collection maintainer</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {USERS.map(u => (
+                      <button key={u} onClick={() => {
+                        const ids = new Set(allInCat.map(s => s.id));
+                        ids.forEach(id => markEdited(id));
+                        setStocks(p => p.map(s => ids.has(s.id) ? { ...s, maintainer: u } : s));
+                        toast.add(`${u} assigned as maintainer for ${collectionDetail}`);
+                        setCollectionDetail(null);
+                      }}
+                        className="px-3 py-1.5 text-xs rounded-lg transition-all active:scale-95 cursor-pointer"
+                        style={{ background: 'rgba(0,128,128,0.08)', color: '#5eead4', border: '1px solid rgba(0,128,128,0.15)' }}>{u}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {cm === currentUser && onTransfer && (
+                <div className="mb-4">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: 'var(--text-3)' }}>Transfer collection</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {USERS.filter(u => u !== currentUser).map(u => (
+                      <button key={u} onClick={() => { onTransfer({ type: 'collection', collection: collectionDetail, name: collectionDetail, to: u }); setCollectionDetail(null); }}
+                        className="px-3 py-1.5 text-xs rounded-lg transition-all active:scale-95 cursor-pointer"
+                        style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>{u}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <Btn v="s" onClick={() => setCollectionDetail(null)} className="w-full">Close</Btn>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* Flip all popup */}
+      <Modal open={!!flipCat} onClose={() => setFlipCat(null)} title={`${typeof flipCat === 'object' ? flipCat?.cat : flipCat} - Set Last Flipped`}>
+        {flipCat && (() => {
+          const fc = typeof flipCat === 'object' ? flipCat : { cat: flipCat, copies: null };
+          const catStocks = stocks.filter(s => (s.category || 'No Collection') === fc.cat && (fc.copies == null || Number(s.copies || 1) === fc.copies));
+          const label = fc.cat + (fc.copies != null && fc.copies > 1 ? ` #${fc.copies}` : '');
+          return (
+            <div>
+              <p className="text-xs mb-4" style={{ color: 'var(--text-3)' }}>Set the last flipped date for all {catStocks.length} stocks in {label}.</p>
+              <Field label="Last flipped date">
+                <Inp type="date" value={flipDate} onChange={e => setFlipDate(e.target.value)} />
+              </Field>
+              <div className="flex gap-2 mt-2">
+                <Btn onClick={() => {
+                  const ids = new Set(catStocks.map(s => s.id));
+                  ids.forEach(id => markEdited(id));
+                  setStocks(p => p.map(s => ids.has(s.id) ? { ...s, lastFlipped: flipDate } : s));
+                  toast.add(`${label} flipped on ${fmt(flipDate)}`);
+                  setFlipCat(null);
+                }} className="flex-1">Set All Flipped</Btn>
+                <Btn v="s" onClick={() => setFlipCat(null)}>Cancel</Btn>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* Add collection modal */}
+      <Modal open={addingCat} onClose={() => setAddingCat(false)} title="New Collection">
+        <Field label="Collection name">
+          <Inp value={newCatName} onChange={e => setNewCatName(e.target.value)} placeholder="e.g. Screen Stocks" autoFocus={!isTouchDevice()}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && newCatName.trim() && !STOCK_CATS.includes(newCatName.trim())) {
+                const name = newCatName.trim();
+                const idx = STOCK_CATS.indexOf('No Collection');
+                const next = [...STOCK_CATS];
+                if (idx >= 0) next.splice(idx, 0, name); else next.push(name);
+                setCollections(next);
+                setCatFilter(name);
+                setAddingCat(false);
+                toast.add(`Collection "${name}" added`);
+              }
+            }} />
+        </Field>
+        {newCatName.trim() && STOCK_CATS.includes(newCatName.trim()) && (
+          <p className="text-xs text-red-400 mb-3">Collection already exists</p>
+        )}
+        <div className="flex gap-2 mt-2">
+          <Btn disabled={!newCatName.trim() || STOCK_CATS.includes(newCatName.trim())} onClick={() => {
+            const name = newCatName.trim();
+            const idx = STOCK_CATS.indexOf('No Collection');
+            const next = [...STOCK_CATS];
+            if (idx >= 0) next.splice(idx, 0, name); else next.push(name);
+            setCollections(next);
+            setCatFilter(name);
+            setAddingCat(false);
+            toast.add(`Collection "${name}" added`);
+          }} className="flex-1">Add</Btn>
+          <Btn v="s" onClick={() => setAddingCat(false)}>Cancel</Btn>
+        </div>
+      </Modal>
+
+      {/* Bulk action toolbar - replaces bottom nav */}
+      {selectMode && (() => {
+        const dis = selected.size === 0;
+        const btnCls = "flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg transition-all active:scale-95 cursor-pointer";
+        const disStyle = { opacity: 0.3, pointerEvents: 'none' };
+        return (
+          <nav className="bottom-nav" style={{ gap: '2px', padding: '4px 6px' }}>
+            <span className="text-[10px] font-semibold px-2 whitespace-nowrap" style={{ color: 'var(--text-2)' }}>{selected.size || 'None'}</span>
+            <div title="Select all / deselect all" onClick={selectAll} className={btnCls} style={{ color: 'var(--accent-2)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/>{selected.size === filtered.length && <polyline points="9 11 12 14 22 4"/>}</svg>
+              <span className="text-[9px]">{selected.size === filtered.length ? 'None' : 'All'}</span>
+            </div>
+            <div title="Mark selected as flipped today" onClick={dis ? undefined : bulkFlip} className={btnCls} style={dis ? { ...disStyle, color: '#86efac' } : { color: '#86efac' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/></svg>
+              <span className="text-[9px]">Flip</span>
+            </div>
+            <div title="Set last flip date on selected" onClick={dis ? undefined : () => { setBulkFlipDate(today()); setBulkAction('flipdate'); }} className={btnCls} style={dis ? { ...disStyle, color: '#86efac' } : { color: '#86efac' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span className="text-[9px]">Date</span>
+            </div>
+            <div title="Move selected to a collection" onClick={dis ? undefined : () => setBulkAction('collection')} className={btnCls} style={dis ? { ...disStyle, color: '#5eead4' } : { color: '#5eead4' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <span className="text-[9px]">Move</span>
+            </div>
+            <div title="Assign a maintainer to selected" onClick={dis ? undefined : () => setBulkAction('maintainer')} className={btnCls} style={dis ? { ...disStyle, color: '#a78bfa' } : { color: '#a78bfa' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span className="text-[9px]">Assign</span>
+            </div>
+            <div title="Append text to selected stock names" onClick={dis ? undefined : () => { setBulkAppendText(''); setBulkAction('append'); }} className={btnCls} style={dis ? { ...disStyle, color: '#fcd34d' } : { color: '#fcd34d' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span className="text-[9px]">Append</span>
+            </div>
+            <div title="Add +1 copy to selected stocks" onClick={dis ? undefined : bulkCopy} className={btnCls} style={dis ? { ...disStyle, color: '#93c5fd' } : { color: '#93c5fd' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span className="text-[9px]">+Copy</span>
+            </div>
+            <div title="Add selected to print queue" onClick={dis ? undefined : bulkPrint} className={btnCls} style={dis ? { ...disStyle, color: '#5eead4' } : { color: '#5eead4' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              <span className="text-[9px]">Print</span>
+            </div>
+            <div title="Delete selected stocks" onClick={dis ? undefined : () => setBulkDeleting(true)} className={btnCls} style={dis ? { ...disStyle, color: '#fca5a5' } : { color: '#fca5a5' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              <span className="text-[9px]">Delete</span>
+            </div>
+          </nav>
+        );
+      })()}
+
+      {/* Bulk action modals */}
+      <Confirm open={bulkDeleting} onOk={() => { bulkDeleteConfirmed(); }} onNo={() => setBulkDeleting(false)}
+        title={`Delete ${selected.size} stock${selected.size > 1 ? 's' : ''}?`}
+        msg="These stocks will be permanently removed." />
+
+      <Modal open={bulkAction === 'collection'} onClose={() => setBulkAction(null)} title="Move to Collection">
+        <div className="grid grid-cols-2 gap-2">
+          {STOCK_CATS.map(cat => (
+            <div key={cat} onClick={() => bulkMoveCollection(cat)} className="loc-card cursor-pointer">
+              <div className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>{cat}</div>
+            </div>
+          ))}
+        </div>
+      </Modal>
+
+      <Modal open={bulkAction === 'maintainer'} onClose={() => setBulkAction(null)} title="Assign Maintainer">
+        <div className="grid grid-cols-2 gap-2">
+          {USERS.map(u => (
+            <div key={u} onClick={() => bulkChangeMaintainer(u)} className="loc-card cursor-pointer">
+              <div className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>{u}</div>
+            </div>
+          ))}
+        </div>
+      </Modal>
+
+
+      <Modal open={bulkAction === 'flipdate'} onClose={() => setBulkAction(null)} title="Set Last Flip Date">
+        <Field label="Date">
+          <Inp type="date" value={bulkFlipDate} onChange={e => setBulkFlipDate(e.target.value)} />
+        </Field>
+        <Btn onClick={() => bulkSetFlipDate(bulkFlipDate)} className="w-full mt-2" disabled={!bulkFlipDate}>Set Date</Btn>
+      </Modal>
+
+      <Modal open={bulkAction === 'append'} onClose={() => setBulkAction(null)} title="Append Text to Name">
+        <Field label="Text to append">
+          <Inp value={bulkAppendText} onChange={e => setBulkAppendText(e.target.value)} placeholder="e.g.  (2nd gen)" autoFocus={!isTouchDevice()}
+            onKeyDown={e => { if (e.key === 'Enter') bulkAppend(bulkAppendText); }} />
+        </Field>
+        <Btn onClick={() => bulkAppend(bulkAppendText)} className="w-full mt-2" disabled={!bulkAppendText.trim()}>Append</Btn>
+      </Modal>
+    </div>
+  );
+}
+
+function VcsSetup({ f, setF, toast }) {
+  const vcsActive = f.vcs?.enabled;
+  const [vcsStep, setVcsStep] = React.useState(0);
+  const [vcsO18, setVcsO18] = React.useState(true);
+  const [vcsCpd, setVcsCpd] = React.useState(2);
+  const [vcsSched, setVcsSched] = React.useState(null);
+  const [confirmDisable, setConfirmDisable] = React.useState(false);
+
+  React.useEffect(() => { if (vcsStep === 3) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsStep, vcsO18, vcsCpd]);
+
+  if (confirmDisable) return (
+    <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
+      <p className="text-sm font-semibold mb-2" style={{ color: '#fca5a5' }}>Disable Virgin Collection?</p>
+      <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Stock will remain expanded with normal flip schedule.</p>
+      <div className="flex gap-2">
+        <button onClick={() => { setF({ ...f, vcs: null }); setConfirmDisable(false); toast.add('VCS disabled'); }}
+          className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg" style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.2)' }}>Yes, disable</button>
+        <button onClick={() => setConfirmDisable(false)}
+          className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg" style={{ background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>Cancel</button>
+      </div>
+    </div>
+  );
+
+  if (vcsActive && vcsStep === 0) return (
+    <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span style={{ color: '#a78bfa' }}>♀</span>
+          <p className="text-xs font-semibold" style={{ color: '#a78bfa' }}>VCS Active</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px]" style={{ color: 'var(--text-3)' }}>{f.vcs.overnightAt18 ? '18°C' : '25°C'} · {f.vcs.collectionsPerDay}×/day</span>
+          <button onClick={() => setConfirmDisable(true)} className="px-2 py-1 text-[10px] rounded-lg" style={{ color: '#fca5a5', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.1)' }}>Stop</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (vcsStep === 0) return (
+    <button onClick={() => setVcsStep(1)} className="w-full mb-4 px-4 py-3 text-sm font-semibold rounded-xl transition-all active:scale-[0.98] cursor-pointer"
+      style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>
+      Enable Virgin Collection
+    </button>
+  );
+
+  return (
+    <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+      <p className="text-xs font-semibold mb-3" style={{ color: '#a78bfa' }}>VCS Setup - Step {vcsStep}/3</p>
+      {vcsStep >= 1 && (
+        <div className="mb-3">
+          <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Overnight temperature?</p>
+          <div className="grid grid-cols-2 gap-2 mb-1">
+            <div onClick={() => setVcsO18(true)} className={`loc-card cursor-pointer ${vcsO18 ? 'selected' : ''}`}>
+              <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>18°C overnight</p>
+              <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>16h virgin window</p>
+            </div>
+            <div onClick={() => setVcsO18(false)} className={`loc-card cursor-pointer ${!vcsO18 ? 'selected' : ''}`}>
+              <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>25°C (no move)</p>
+              <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>8h virgin window</p>
+            </div>
+          </div>
+          <p className="text-[10px] mb-2" style={{ color: 'var(--text-3)' }}>{vcsO18 ? '18°C extends the virgin window to ~16h and captures the dawn eclosion peak.' : 'Morning eclosers will have mated - must clear & discard first.'}</p>
+          {vcsStep === 1 && <button onClick={() => setVcsStep(2)} className="w-full px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>Next →</button>}
+        </div>
+      )}
+      {vcsStep >= 2 && (
+        <div className="mb-3">
+          <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Collections per day?</p>
+          <div className="grid grid-cols-2 gap-2 mb-1">
+            <div onClick={() => setVcsCpd(2)} className={`loc-card cursor-pointer ${vcsCpd === 2 ? 'selected' : ''}`}>
+              <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>2× daily</p>
+              <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>Recommended</p>
+            </div>
+            <div onClick={() => setVcsCpd(3)} className={`loc-card cursor-pointer ${vcsCpd === 3 ? 'selected' : ''}`}>
+              <p className="text-xs font-bold" style={{ color: 'var(--text-1)' }}>3× daily</p>
+              <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>Rare genotypes</p>
+            </div>
+          </div>
+          {vcsStep === 2 && <button onClick={() => setVcsStep(3)} className="w-full px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.12)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>Next →</button>}
+        </div>
+      )}
+      {vcsStep === 3 && vcsSched && (
+        <div>
+          <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-2)' }}>Schedule</p>
+          <div className="space-y-2 mb-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs" style={{ color: 'var(--text-2)' }}>Evening clear{vcsO18 ? ' → 18°C' : ''}</span>
+              <input type="time" value={vcsSched.eveningClear} onChange={e => setVcsSched({ ...vcsSched, eveningClear: e.target.value })}
+                className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs" style={{ color: vcsO18 ? '#5eead4' : '#fca5a5' }}>{vcsO18 ? 'Morning collect' : 'Morning clear + discard ⚠️'}</span>
+              <input type="time" value={vcsSched.morningCollect} onChange={e => setVcsSched({ ...vcsSched, morningCollect: e.target.value })}
+                className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+            </div>
+            {vcsCpd === 3 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs" style={{ color: '#5eead4' }}>Midday collect</span>
+                <input type="time" value={vcsSched.middayCollect || ''} onChange={e => setVcsSched({ ...vcsSched, middayCollect: e.target.value })}
+                  className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-xs" style={{ color: '#5eead4' }}>Afternoon collect + clear</span>
+              <input type="time" value={vcsSched.afternoonCollect} onChange={e => setVcsSched({ ...vcsSched, afternoonCollect: e.target.value })}
+                className="text-xs px-2 py-1 rounded-lg" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }} />
+            </div>
+          </div>
+          {!vcsO18 && <p className="text-[10px] mb-3 p-2 rounded-lg" style={{ background: 'rgba(239,68,68,0.06)', color: '#fca5a5' }}>⚠️ Without 18°C overnight, morning flies must be discarded - they are NOT reliable virgins.</p>}
+          <div className="flex gap-2">
+            <button onClick={() => {
+              const newVcs = makeVcs(vcsO18, vcsCpd, vcsSched);
+              setF({ ...f, vcs: newVcs });
+              setVcsStep(0);
+              toast.add('VCS enabled');
+              if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission();
+            }} className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.25)' }}>Start Virgin Collection</button>
+            <button onClick={() => setVcsStep(0)} className="px-3 py-2 text-xs font-semibold rounded-lg cursor-pointer" style={{ background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_CATS, setCollections, currentUser, onTransfer, virginBank, setVirginBank, printList, setPrintList, onMassAdd, expBank, setExpBank }) {
+  const [f, setF] = useState({});
+  const [showNotes, setShowNotes] = useState(false);
+  const [nameError, setNameError] = useState('');
+
+  useEffect(() => {
+    if (stock) {
+      setF({ ...stock });
+      setShowNotes(!!stock.notes);
+      setNameError('');
+    }
+  }, [stock?.id, stock !== null]);
+
+  const saveRef = useRef(null);
+  useEffect(() => {
+    if (!stock) return;
+    const h = e => {
+      if (e.key !== 'Enter') return;
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (tag === 'textarea' || tag === 'select') return;
+      e.preventDefault();
+      saveRef.current?.();
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [!!stock]);
+
+  if (!stock) return null;
+  const isNew = !stock.id;
+
+  function save() {
+    if (!f.name?.trim()) { setNameError('Name is required'); return; }
+    const saving = { ...f };
+    // Auto-disable VCS if stock is dead or no longer expanded
+    if (saving.vcs?.enabled && (stockTags(saving).includes('Dead') || (saving.variant || 'stock') !== 'expanded')) {
+      saving.vcs = null;
+    }
+    // Auto-inherit collection maintainer when stock has no maintainer
+    if (saving.category && saving.category !== 'No Collection') {
+      const catStocks = stocks.filter(s => s.id !== saving.id && (s.category || 'No Collection') === saving.category);
+      const maintainers = [...new Set(catStocks.map(s => s.maintainer).filter(Boolean))];
+      if (maintainers.length === 1 && !saving.maintainer) saving.maintainer = maintainers[0];
+    }
+    if (isNew) {
+      const newId = uid();
+      markEdited(newId);
+      setStocks(p => [...p, { ...saving, id: newId, createdAt: today(), lastFlipped: today() }]);
+      toast.add('Stock added');
+    } else {
+      markEdited(saving.id);
+      setStocks(p => p.map(s => s.id === saving.id ? { ...s, ...saving } : s));
+      toast.add('Stock updated');
+    }
+    onClose();
+  }
+  saveRef.current = save;
+
+  return (
+    <Modal open={!!stock} onClose={onClose} title={isNew ? 'New Stock' : <div className="flex items-center gap-2">{f.name || 'Edit Stock'}<button onClick={() => { const inList = printList && printList.includes(f.id); setPrintList(p => inList ? p.filter(x => x !== f.id) : [...p, f.id]); toast.add(inList ? 'Removed from print list' : 'Added to print list'); }} className="touch p-1.5 rounded-lg transition-all active:scale-90" style={{ color: printList && printList.includes(f.id) ? '#5eead4' : 'var(--text-3)' }} title={printList && printList.includes(f.id) ? 'In print list' : 'Add to print list'}><svg width="16" height="16" viewBox="0 0 24 24" fill={printList && printList.includes(f.id) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button></div>}>
+      <Field label="Name *">
+        <Inp value={f.name || ''} onChange={e => { const v = e.target.value; const upd = { ...f, name: v }; if (!f.source && !f.sourceId) { const g = guessSource(v); if (g) { upd.source = g.source; upd.sourceId = g.sourceId; if (g.source === 'Bloomington' && g.sourceId) upd.flybaseId = `FBst${g.sourceId.replace(/\D/g, '').padStart(7, '0')}`; } } setF(upd); setNameError(''); }} placeholder="e.g. Oregon-R" autoFocus={!isTouchDevice()} />
+        {nameError && <p className="text-xs text-red-400 mt-1">{nameError}</p>}
+      </Field>
+      <Field label="Copy">
+        <Inp type="number" min="1" value={f.copies || 1} onChange={e => setF({ ...f, copies: Math.max(1, parseInt(e.target.value) || 1) })} />
+      </Field>
+      <Field label="Variant">
+        <div className="grid grid-cols-2 gap-2">
+          {STOCK_VARIANTS.map(v => (
+            <div key={v} onClick={() => {
+              const upd = { ...f, variant: v };
+              if (v === 'expanded') { upd.location = '25inc'; }
+              setF(upd);
+            }} className={`loc-card ${(f.variant || 'stock') === v ? 'selected' : ''}`}>
+              <div className="text-sm font-bold capitalize" style={{ color: 'var(--text-1)' }}>{v}</div>
+              <div className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>{v === 'expanded' ? '3wk flip @ 25°C' : 'Variable flip'}</div>
+            </div>
+          ))}
+        </div>
+      </Field>
+      <Field label="Collection">
+        <select value={f.category || 'No Collection'} onChange={e => {
+          if (e.target.value === '__new__') {
+            const name = prompt('New collection name:');
+            if (name && name.trim() && !STOCK_CATS.includes(name.trim())) {
+              const n = name.trim();
+              const idx = STOCK_CATS.indexOf('No Collection');
+              const next = [...STOCK_CATS];
+              if (idx >= 0) next.splice(idx, 0, n); else next.push(n);
+              setCollections(next);
+              setF({ ...f, category: n });
+            }
+          } else { setF({ ...f, category: e.target.value }); }
+        }} className="w-full px-4 py-3 text-sm rounded-xl" style={{ background: 'var(--surface)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>
+          {STOCK_CATS.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+          <option value="__new__">+ New Collection</option>
+        </select>
+      </Field>
+      <Field label="Genotype">
+        <Inp value={f.genotype || ''} onChange={e => setF({ ...f, genotype: e.target.value })} placeholder="e.g. w[1118]; UAS-CsChrimson/CyO" />
+      </Field>
+      <div className="flex items-center gap-3 mb-3">
+        <div onClick={() => setF({ ...f, isGift: !f.isGift, source: f.isGift ? f.source : '', sourceId: f.isGift ? f.sourceId : '' })}
+          className="loc-card flex items-center gap-2 px-4 py-2 cursor-pointer" style={f.isGift ? { borderColor: 'rgba(0,128,128,0.3)', background: 'rgba(0,128,128,0.08)' } : {}}>
+          <span className="text-sm">{f.isGift ? '✓' : ''}</span>
+          <span className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>Gift</span>
+        </div>
+      </div>
+      {f.isGift ? (
+        <Field label="From lab">
+          <Inp value={f.giftFrom || ''} onChange={e => setF({ ...f, giftFrom: e.target.value })} placeholder="e.g. Jefferis Lab" />
+        </Field>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Source">
+              <select value={f.source || ''} onChange={e => setF({ ...f, source: e.target.value })}
+                className="w-full px-4 py-3 text-sm rounded-xl">
+                <option value="">-</option>
+                {STOCK_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            <Field label="Stock #">
+              <Inp value={f.sourceId || ''} onChange={e => {
+                const v = e.target.value;
+                const upd = { ...f, sourceId: v };
+                const numId = v.replace(/\D/g, '');
+                if (f.source === 'Bloomington' && numId) {
+                  if (!f.flybaseId) upd.flybaseId = `FBst${numId.padStart(7, '0')}`;
+                  if (numId.length >= 4) fetchBDSCInfo(numId).then(info => {
+                    if (!info) return;
+                    setF(prev => {
+                      const next = { ...prev };
+                      if (info.janeliaLine) next.janeliaLine = info.janeliaLine;
+                      if (info.genotype && !prev.genotype) next.genotype = info.genotype;
+                      return next;
+                    });
+                  });
+                }
+                setF(upd);
+              }} placeholder="79039" />
+            </Field>
+          </div>
+          {f.source && f.sourceId && stockUrl(f.source, f.sourceId) && (
+            <div className="flex flex-wrap gap-3 mb-3">
+              <a href={stockUrl(f.source, f.sourceId)} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: 'var(--accent-2)' }}>
+                View on {f.source} ↗
+              </a>
+              {f.source === 'Bloomington' && (
+                <a href={`https://flybase.org/reports/FBst${f.sourceId.replace(/\D/g, '').padStart(7, '0')}`} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: 'var(--accent-2)' }}>
+                  View on FlyBase ↗
+                </a>
+              )}
+              {(f.janeliaLine || parseJaneliaLine(f.notes)) && (
+                <a href={janeliaUrl(f.janeliaLine || parseJaneliaLine(f.notes))} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: 'var(--accent-2)' }}>
+                  FlyLight ({f.janeliaLine || parseJaneliaLine(f.notes)}) ↗
+                </a>
+              )}
+            </div>
+          )}
+          {!(f.source && f.sourceId && stockUrl(f.source, f.sourceId)) && (f.janeliaLine || parseJaneliaLine(f.notes)) && (
+            <div className="flex gap-3 mb-3">
+              <a href={janeliaUrl(f.janeliaLine || parseJaneliaLine(f.notes))} target="_blank" rel="noopener" className="text-xs inline-block touch" style={{ color: 'var(--accent-2)' }}>
+                FlyLight ({f.janeliaLine || parseJaneliaLine(f.notes)}) ↗
+              </a>
+            </div>
+          )}
+          {f.source && !stockUrl(f.source, f.sourceId) && f.source !== 'Other' && (
+            <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Source: {f.source}{f.sourceId ? ` #${f.sourceId}` : ''}</p>
+          )}
+        </>
+      )}
+      <Field label="FlyBase">
+        <Inp value={f.flybaseId || ''} onChange={e => {
+          const v = e.target.value;
+          const parsed = parseFlyBase(v);
+          setF({ ...f, flybaseId: parsed || v });
+        }} placeholder="FBst0079039 or flybase.org/reports/..." />
+      </Field>
+      {f.flybaseId && flybaseUrl(f.flybaseId) && (
+        <a href={flybaseUrl(f.flybaseId)} target="_blank" rel="noopener" className="text-xs mb-3 inline-block touch" style={{ color: 'var(--accent-2)' }}>
+          View on FlyBase ↗
+        </a>
+      )}
+      {(f.variant || 'stock') !== 'expanded' && (
+        <Field label="Location">
+          <div className="grid grid-cols-2 gap-2">
+            {TEMPS.map(t => (
+              <div key={t} onClick={() => setF({ ...f, location: t })} className={`loc-card ${f.location === t ? 'selected' : ''}`}>
+                <div className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>{tempFull(t)}</div>
+              </div>
+            ))}
+          </div>
+        </Field>
+      )}
+      {!isNew && (
+        <Field label="Last Flipped">
+          <Inp type="date" value={normDate(f.lastFlipped)} onChange={e => setF({ ...f, lastFlipped: e.target.value })} />
+          {f.lastFlipped && <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>{-dFromNow(f.lastFlipped)}d ago, next flip in {Math.max(0, getFlipDays(f) - (-dFromNow(f.lastFlipped)))}d</p>}
+        </Field>
+      )}
+      {!f.maintainer ? (
+        <Field label="Maintainer">
+          <select value={f.maintainer || ''} onChange={e => setF({ ...f, maintainer: e.target.value })}
+            className="w-full px-4 py-3 text-sm rounded-xl">
+            <option value="">-</option>
+            {USERS.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </Field>
+      ) : (
+        <Field label="Maintainer">
+          <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-1)' }}>{f.maintainer}</p>
+          {onTransfer && f.maintainer === currentUser && !isNew && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider font-semibold mb-2" style={{ color: 'var(--text-3)' }}>Transfer maintainership</p>
+              <div className="flex flex-wrap gap-1.5">
+                {USERS.filter(u => u !== currentUser).map(u => (
+                  <button key={u} onClick={() => { onTransfer({ type: 'stock', itemId: f.id, name: f.name, to: u }); onClose(); }}
+                    className="px-3 py-1.5 text-xs rounded-lg transition-all active:scale-95 cursor-pointer"
+                    style={{ background: 'rgba(139,92,246,0.08)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.15)' }}>{u}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </Field>
+      )}
+      {!showNotes ? (
+        <button onClick={() => setShowNotes(true)} className="text-xs mb-4 touch" style={{ color: 'var(--accent-2)' }}>+ add notes</button>
+      ) : (
+        <Field label="Notes"><Txt value={f.notes || ''} onChange={e => setF({ ...f, notes: e.target.value })} rows={2} /></Field>
+      )}
+      {/* VCS Setup */}
+      {!isNew && (f.variant || 'stock') === 'expanded' && <VcsSetup f={f} setF={setF} toast={toast} />}
+
+      {!isNew && virginBank && setVirginBank && (
+        <div className="mb-4 p-3 rounded-xl" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold" style={{ color: 'var(--text-2)' }}>Virgin Bank</p>
+            <p className="text-xs" style={{ color: 'var(--text-3)' }}>{virginBank[f.id] || 0} banked</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { if ((virginBank[f.id] || 0) > 0) { setVirginBank(prev => ({ ...prev, [f.id]: Math.max(0, (prev[f.id] || 0) - 1) })); toast.add('-1 virgin'); } }}
+              disabled={(virginBank[f.id] || 0) <= 0}
+              className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+              style={(virginBank[f.id] || 0) > 0 ? { background: 'rgba(239,68,68,0.08)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' } : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', opacity: 0.4 }}>-1</button>
+            {[1, 3, 5].map(n => (
+              <button key={n} onClick={() => { setVirginBank(prev => ({ ...prev, [f.id]: (prev[f.id] || 0) + n })); toast.add(`+${n} virgins banked`); }}
+                className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                style={{ background: 'rgba(0,128,128,0.08)', color: '#5eead4', border: '1px solid rgba(0,128,128,0.15)' }}>+{n}</button>
+            ))}
+            {(virginBank[f.id] || 0) > 0 && (
+              <button onClick={() => { setVirginBank(prev => { const next = { ...prev }; delete next[f.id]; return next; }); toast.add('Cleared'); }}
+                className="px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                style={{ background: 'rgba(239,68,68,0.08)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>Clear</button>
+            )}
+          </div>
+        </div>
+      )}
+      {!isNew && expBank && setExpBank && (
+        <div className="mb-4 p-3 rounded-xl" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold" style={{ color: '#5eead4' }}>Exp Bank</p>
+            <p className="text-xs" style={{ color: 'var(--text-3)' }}>{(expBank[f.id]?.m || 0)}♂ {(expBank[f.id]?.f || 0)}♀</p>
+          </div>
+          <div className="mb-2">
+            <p className="text-[10px] mb-1" style={{ color: '#93c5fd' }}>♂ Males</p>
+            <div className="flex gap-2">
+              <button onClick={() => { if ((expBank[f.id]?.m || 0) > 0) { setExpBank(prev => ({ ...prev, [f.id]: { ...(prev[f.id] || { m: 0, f: 0, source: 'stock' }), m: Math.max(0, (prev[f.id]?.m || 0) - 1) } })); toast.add('-1 ♂'); } }}
+                disabled={(expBank[f.id]?.m || 0) <= 0}
+                className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                style={(expBank[f.id]?.m || 0) > 0 ? { background: 'rgba(239,68,68,0.08)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' } : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', opacity: 0.4 }}>-1</button>
+              {[1, 3, 5].map(n => (
+                <button key={n} onClick={() => { setExpBank(prev => ({ ...prev, [f.id]: { ...(prev[f.id] || { m: 0, f: 0, source: 'stock' }), m: (prev[f.id]?.m || 0) + n } })); toast.add(`+${n} ♂ logged`); }}
+                  className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                  style={{ background: 'rgba(94,234,212,0.08)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] mb-1" style={{ color: '#f9a8d4' }}>♀ Females</p>
+            <div className="flex gap-2">
+              <button onClick={() => { if ((expBank[f.id]?.f || 0) > 0) { setExpBank(prev => ({ ...prev, [f.id]: { ...(prev[f.id] || { m: 0, f: 0, source: 'stock' }), f: Math.max(0, (prev[f.id]?.f || 0) - 1) } })); toast.add('-1 ♀'); } }}
+                disabled={(expBank[f.id]?.f || 0) <= 0}
+                className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                style={(expBank[f.id]?.f || 0) > 0 ? { background: 'rgba(239,68,68,0.08)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' } : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)', opacity: 0.4 }}>-1</button>
+              {[1, 3, 5].map(n => (
+                <button key={n} onClick={() => { setExpBank(prev => ({ ...prev, [f.id]: { ...(prev[f.id] || { m: 0, f: 0, source: 'stock' }), f: (prev[f.id]?.f || 0) + n } })); toast.add(`+${n} ♀ logged`); }}
+                  className="flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                  style={{ background: 'rgba(94,234,212,0.08)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {!isNew && (
+        <button onClick={() => {
+          const url = window.location.origin + window.location.pathname + '?stock=' + f.id;
+          navigator.clipboard.writeText(url).then(() => toast.add('Link copied'));
+        }}
+          className="w-full text-xs mb-3 touch" style={{ color: 'var(--accent-2)' }}>
+          Copy share link
+        </button>
+      )}
+      {isNew && onMassAdd && <button onClick={onMassAdd} className="w-full text-xs mb-3 touch" style={{ color: 'var(--accent-2)' }}>Add multiple stocks at once</button>}
+      <div className="flex gap-2">
+        <Btn onClick={save} className="flex-1">Save</Btn>
+        {!isNew && <Btn v="s" onClick={() => {
+          const split = { ...f, id: uid(), name: f.name + ' (split)', maintainer: currentUser, createdAt: today(), lastFlipped: today() };
+          delete split.notes;
+          markEdited(split.id);
+          setStocks(p => [...p, split]);
+          toast.add(`Split off "${split.name}"`);
+          onClose();
+        }}>Split</Btn>}
+        {!isNew && <Btn v="d" onClick={() => onDelete(f.id)}>Delete</Btn>}
+        <Btn v="s" onClick={onClose}>Cancel</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ========== VIRGINS SCREEN ========== */
+function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross, printListVirgins, setPrintListVirgins }) {
+  const [search, setSearch] = useState('');
+  const stocksWithVirgins = useMemo(() => {
+    return stocks.map(s => ({
+      ...s,
+      count: virginBank[s.id] || 0,
+    })).sort((a, b) => b.count - a.count);
+  }, [stocks, virginBank]);
+
+  function addVirgins(stockId, n) {
+    setVirginBank(prev => ({ ...prev, [stockId]: (prev[stockId] || 0) + n }));
+    toast.add(`+${n} virgins logged`);
+  }
+
+  function clearStock(stockId) {
+    setVirginBank(prev => { const next = { ...prev }; delete next[stockId]; return next; });
+    toast.add('Cleared');
+  }
+
+  const totalVirgins = Object.values(virginBank).reduce((s, n) => s + n, 0);
+
+  const bankedStocks = useMemo(() => stocksWithVirgins.filter(s => s.count > 0), [stocksWithVirgins]);
+
+  return (
+    <div>
+      {/* Virgin Bank Overview */}
+      <div className="card p-5 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>Virgin Bank</p>
+          <span className="text-xs" style={{ color: 'var(--text-3)' }}>{totalVirgins} total</span>
+        </div>
+        {bankedStocks.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {bankedStocks.map(s => (
+              <div key={s.id} className="flex items-center gap-2 p-3 rounded-xl transition-all" style={{ background: 'rgba(249,168,212,0.06)', border: '1px solid rgba(249,168,212,0.1)' }}>
+                <span className="text-xl font-bold" style={{ color: '#f9a8d4' }}>{s.count}</span>
+                <div className="flex-1 min-w-0 cursor-pointer active:scale-95" onClick={() => onStartCross?.(s.id)}>
+                  <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                  <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>♀ banked · tap to cross</p>
+                </div>
+                <button onClick={() => { setPrintListVirgins(p => p.includes(s.id) ? p.filter(x => x !== s.id) : [...p, s.id]); toast.add(printListVirgins.includes(s.id) ? 'Removed virgin label' : 'Added virgin label'); }}
+                  className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" title="Print virgin label"
+                  style={{ color: printListVirgins.includes(s.id) ? '#5eead4' : 'var(--text-3)', background: 'transparent' }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                </button>
+                <button onClick={() => clearStock(s.id)} className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" style={{ color: 'var(--text-3)', background: 'transparent' }} title="Remove">✕</button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-center py-3" style={{ color: 'var(--text-3)' }}>No virgins banked yet</p>
+        )}
+      </div>
+
+      {/* Log Virgins */}
+      <p className="section-header">Log Virgins</p>
+      <Inp placeholder="Search stocks..." value={search} onChange={e => setSearch(e.target.value)} className="mb-4" />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
+        {stocks.filter(s => !search || [s.name, s.genotype || ''].some(x => x.toLowerCase().includes(search.toLowerCase()))).map(s => {
+          const count = virginBank[s.id] || 0;
+          return (
+            <div key={s.id} className="card p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex-1 min-w-0">
+                  <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
+                  {count > 0 && <span className="badge ml-2" style={{ background: 'rgba(249,168,212,0.12)', color: '#f9a8d4', border: '1px solid rgba(249,168,212,0.15)' }}>{count} ♀</span>}
+                </div>
+                {count > 0 && (
+                  <button onClick={() => clearStock(s.id)} className="text-xs cursor-pointer" style={{ color: 'var(--text-3)' }}>clear</button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => addVirgins(s.id, -1)} className="qlog-btn flex-1" disabled={count <= 0} style={count <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                {[1, 3, 5].map(n => (
+                  <button key={n} onClick={() => addVirgins(s.id, n)} className="qlog-btn flex-1">+{n}</button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {stocks.length === 0 && (
+        <div className="text-center py-16">
+          <p className="text-sm" style={{ color: 'var(--text-3)' }}>Add stocks first to track virgins</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========== EXP SCREEN ========== */
+function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps, setPrintListExps }) {
+  const [search, setSearch] = useState('');
+  const [logMode, setLogMode] = useState('cross');
+
+  const totalM = Object.values(expBank).reduce((s, e) => s + (e.m || 0), 0);
+  const totalF = Object.values(expBank).reduce((s, e) => s + (e.f || 0), 0);
+
+  const bankedEntries = useMemo(() => {
+    return Object.entries(expBank)
+      .filter(([, v]) => (v.m || 0) + (v.f || 0) > 0)
+      .map(([id, v]) => {
+        const src = v.source === 'cross'
+          ? crosses.find(c => c.id === id)
+          : stocks.find(s => s.id === id);
+        const name = v.source === 'cross'
+          ? (src ? `${(stocks.find(s => s.id === src.parentA)?.name || '?')} × ${(stocks.find(s => s.id === src.parentB)?.name || '?')}` : id)
+          : (src?.name || id);
+        return { id, ...v, name, srcObj: src };
+      })
+      .sort((a, b) => ((b.m || 0) + (b.f || 0)) - ((a.m || 0) + (a.f || 0)));
+  }, [expBank, stocks, crosses]);
+
+  function addExp(sourceId, sex, n, source) {
+    setExpBank(prev => {
+      const cur = prev[sourceId] || { m: 0, f: 0, source };
+      return { ...prev, [sourceId]: { ...cur, [sex]: Math.max(0, (cur[sex] || 0) + n) } };
+    });
+    toast.add(`${n > 0 ? '+' : ''}${n} ${sex === 'm' ? '♂' : '♀'} logged`);
+  }
+
+  function clearEntry(sourceId) {
+    setExpBank(prev => { const next = { ...prev }; delete next[sourceId]; return next; });
+    toast.add('Cleared');
+  }
+
+  const eligibleCrosses = crosses.filter(c =>
+    ['collecting progeny', 'screening', 'ripening', 'done'].includes(c.status)
+  );
+
+  return (
+    <div>
+      {/* Overview Card */}
+      <div className="card p-5 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>Experimental Animals</p>
+          <span className="text-xs" style={{ color: 'var(--text-3)' }}>{totalM}♂ {totalF}♀ total</span>
+        </div>
+        {bankedEntries.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {bankedEntries.map(e => (
+              <div key={e.id} className="flex items-center gap-2 p-3 rounded-xl" style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.1)' }}>
+                <div className="text-center">
+                  <span className="text-lg font-bold" style={{ color: '#5eead4' }}>{(e.m || 0) + (e.f || 0)}</span>
+                  <p className="text-[9px]" style={{ color: 'var(--text-3)' }}>{e.m || 0}♂ {e.f || 0}♀</p>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{e.name}</p>
+                  <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>{e.source === 'cross' ? '✕ cross' : '▪ stock'}</p>
+                </div>
+                <button onClick={() => { setPrintListExps(p => p.includes(e.id) ? p.filter(x => x !== e.id) : [...p, e.id]); toast.add(printListExps.includes(e.id) ? 'Removed exp label' : 'Added exp label'); }}
+                  className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" title="Print exp label"
+                  style={{ color: printListExps.includes(e.id) ? '#5eead4' : 'var(--text-3)', background: 'transparent' }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                </button>
+                <button onClick={() => clearEntry(e.id)} className="p-1 rounded-md transition-all active:scale-90 cursor-pointer self-start" style={{ color: 'var(--text-3)', background: 'transparent' }} title="Remove">✕</button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-center py-3" style={{ color: 'var(--text-3)' }}>No experimental animals logged yet</p>
+        )}
+      </div>
+
+      {/* Log Section */}
+      <div className="flex items-center gap-2 mb-4">
+        <p className="section-header flex-1" style={{ margin: 0 }}>Log Animals</p>
+        <div className="flex gap-1">
+          <button onClick={() => setLogMode('cross')} className="px-3 py-1 text-xs font-semibold rounded-lg cursor-pointer"
+            style={logMode === 'cross' ? { background: 'rgba(94,234,212,0.15)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Crosses</button>
+          <button onClick={() => setLogMode('stock')} className="px-3 py-1 text-xs font-semibold rounded-lg cursor-pointer"
+            style={logMode === 'stock' ? { background: 'rgba(94,234,212,0.15)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>Stocks</button>
+        </div>
+      </div>
+      <Inp placeholder={logMode === 'cross' ? 'Search crosses...' : 'Search stocks...'} value={search} onChange={e => setSearch(e.target.value)} className="mb-4" />
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
+        {logMode === 'cross' ? (
+          eligibleCrosses.filter(c => {
+            if (!search) return true;
+            const q = search.toLowerCase();
+            const pA = stocks.find(s => s.id === c.parentA);
+            const pB = stocks.find(s => s.id === c.parentB);
+            return [pA?.name, pB?.name, c.notes || ''].some(x => (x || '').toLowerCase().includes(q));
+          }).map(c => {
+            const pA = stocks.find(s => s.id === c.parentA);
+            const pB = stocks.find(s => s.id === c.parentB);
+            const label = `${pA?.name || '?'} × ${pB?.name || '?'}`;
+            const entry = expBank[c.id] || { m: 0, f: 0 };
+            return (
+              <div key={c.id} className="card p-4">
+                <div className="flex items-center gap-3 mb-1">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{label}</span>
+                    {((entry.m || 0) + (entry.f || 0)) > 0 && (
+                      <span className="badge ml-2" style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>{entry.m || 0}♂ {entry.f || 0}♀</span>
+                    )}
+                  </div>
+                  {((entry.m || 0) + (entry.f || 0)) > 0 && (
+                    <button onClick={() => clearEntry(c.id)} className="text-xs cursor-pointer" style={{ color: 'var(--text-3)' }}>clear</button>
+                  )}
+                </div>
+                <p className="text-[10px] mb-3" style={{ color: 'var(--text-3)' }}>{c.status}</p>
+                <div className="mb-2">
+                  <p className="text-[10px] mb-1" style={{ color: '#93c5fd' }}>♂ Males</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => addExp(c.id, 'm', -1, 'cross')} className="qlog-btn flex-1" disabled={(entry.m || 0) <= 0} style={(entry.m || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                    {[1, 3, 5].map(n => <button key={n} onClick={() => addExp(c.id, 'm', n, 'cross')} className="qlog-btn flex-1">+{n}</button>)}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] mb-1" style={{ color: '#f9a8d4' }}>♀ Females</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => addExp(c.id, 'f', -1, 'cross')} className="qlog-btn flex-1" disabled={(entry.f || 0) <= 0} style={(entry.f || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                    {[1, 3, 5].map(n => <button key={n} onClick={() => addExp(c.id, 'f', n, 'cross')} className="qlog-btn flex-1">+{n}</button>)}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          stocks.filter(s => !search || [s.name, s.genotype || ''].some(x => x.toLowerCase().includes(search.toLowerCase()))).map(s => {
+            const entry = expBank[s.id] || { m: 0, f: 0 };
+            return (
+              <div key={s.id} className="card p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[15px] font-bold" style={{ color: 'var(--text-1)' }}>{s.name}</span>
+                    {((entry.m || 0) + (entry.f || 0)) > 0 && (
+                      <span className="badge ml-2" style={{ background: 'rgba(94,234,212,0.12)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>{entry.m || 0}♂ {entry.f || 0}♀</span>
+                    )}
+                  </div>
+                  {((entry.m || 0) + (entry.f || 0)) > 0 && (
+                    <button onClick={() => clearEntry(s.id)} className="text-xs cursor-pointer" style={{ color: 'var(--text-3)' }}>clear</button>
+                  )}
+                </div>
+                <div className="mb-2">
+                  <p className="text-[10px] mb-1" style={{ color: '#93c5fd' }}>♂ Males</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => addExp(s.id, 'm', -1, 'stock')} className="qlog-btn flex-1" disabled={(entry.m || 0) <= 0} style={(entry.m || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                    {[1, 3, 5].map(n => <button key={n} onClick={() => addExp(s.id, 'm', n, 'stock')} className="qlog-btn flex-1">+{n}</button>)}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] mb-1" style={{ color: '#f9a8d4' }}>♀ Females</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => addExp(s.id, 'f', -1, 'stock')} className="qlog-btn flex-1" disabled={(entry.f || 0) <= 0} style={(entry.f || 0) <= 0 ? { opacity: 0.3 } : {}}>-1</button>
+                    {[1, 3, 5].map(n => <button key={n} onClick={() => addExp(s.id, 'f', n, 'stock')} className="qlog-btn flex-1">+{n}</button>)}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {(logMode === 'cross' ? eligibleCrosses.length : stocks.length) === 0 && (
+        <div className="text-center py-16">
+          <p className="text-sm" style={{ color: 'var(--text-3)' }}>{logMode === 'cross' ? 'No crosses in screening/collecting stage yet' : 'Add stocks first'}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VirginNotifSettings({ toast }) {
+  const [vcsNotify, setVcsNotify] = useLS('flo-vcs-notify', true);
+  const [vcsRemindMin, setVcsRemindMin] = useLS('flo-vcs-remind-min', 15);
+  const [vcsOverdueMin, setVcsOverdueMin] = useLS('flo-vcs-overdue-min', 30);
+  const requestPerm = (onGranted) => {
+    if (!('Notification' in window)) { toast.add('Notifications not supported'); return; }
+    if (Notification.permission === 'denied') { toast.add('Notifications blocked - enable in browser settings'); return; }
+    if (Notification.permission === 'default') { Notification.requestPermission().then(p => { if (p === 'granted') onGranted(); else toast.add('Permission denied'); }); }
+    else onGranted();
+  };
+  return (
+    <div className="card p-5">
+      <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Virgin Collection Notifications</p>
+      <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Alerts for VCS collection schedules and deadlines.</p>
+      <div className="space-y-3">
+        <button onClick={() => {
+          if (!vcsNotify) requestPerm(() => { setVcsNotify(true); toast.add('Notifications enabled'); });
+          else { setVcsNotify(false); toast.add('Notifications disabled'); }
+        }}
+          className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-[0.97]"
+          style={vcsNotify ? { background: 'rgba(34,197,94,0.1)', color: '#86efac', border: '1px solid rgba(34,197,94,0.2)' } : { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
+          {vcsNotify ? 'Notifications Enabled' : 'Enable Notifications'}
+        </button>
+        {vcsNotify && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Remind before (min)">
+              <Inp type="number" min="1" max="60" value={vcsRemindMin} onChange={e => setVcsRemindMin(Math.max(1, parseInt(e.target.value) || 15))} />
+            </Field>
+            <Field label="Overdue after (min)">
+              <Inp type="number" min="5" max="120" value={vcsOverdueMin} onChange={e => setVcsOverdueMin(Math.max(5, parseInt(e.target.value) || 30))} />
+            </Field>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ========== SETTINGS SCREEN ========== */
+function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser, demoMode, setIsDemoMode }) {
+  const fileRef = useRef(null);
+  const [showRef, setShowRef] = useState(false);
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [adminPinInput, setAdminPinInput] = useState('');
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [confirmLoadDemo, setConfirmLoadDemo] = useState(false);
+  const [confirmResetPin, setConfirmResetPin] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null);
+  function adminPinGate(onSuccess) {
+    const floHash = localStorage.getItem('flo-pin-Flo');
+    if (!floHash) { toast.add('Flo has no PIN set'); return; }
+    hashPin(adminPinInput).then(h => {
+      if (h === floHash) { setAdminUnlocked(true); setAdminPinInput(''); if (onSuccess) onSuccess(); }
+      else { toast.add('Wrong PIN'); setAdminPinInput(''); }
+    });
+  }
+
+  function exportJSON() {
+    const d = JSON.stringify({ stocks, crosses, exportedAt: new Date().toISOString() }, null, 2);
+    const b = new Blob([d], { type: 'application/json' });
+    const u = URL.createObjectURL(b);
+    const a = document.createElement('a');
+    a.href = u; a.download = `flomington-${today()}.json`; a.click();
+    URL.revokeObjectURL(u);
+    toast.add('Backup exported');
+  }
+
+  function importJSON(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { toast.add('File too large (max 10 MB)'); e.target.value = ''; return; }
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const d = JSON.parse(ev.target.result);
+        if (d.stocks && !Array.isArray(d.stocks)) { toast.add('Invalid file: stocks is not an array'); return; }
+        if (d.crosses && !Array.isArray(d.crosses)) { toast.add('Invalid file: crosses is not an array'); return; }
+        if (!d.stocks && !d.crosses) { toast.add('Invalid file: no stocks or crosses found'); return; }
+        setPendingImport(d);
+      } catch { toast.add('Invalid JSON file'); }
+    };
+    r.readAsText(file);
+    e.target.value = '';
+  }
+
+  function applyImport() {
+    if (!pendingImport) return;
+    if (pendingImport.stocks) setStocks(pendingImport.stocks);
+    if (pendingImport.crosses) setCrosses(pendingImport.crosses);
+    toast.add('Data imported');
+    setPendingImport(null);
+  }
+
+  function exportAllICS() {
+    const ev = [];
+    crosses.forEach(c => {
+      const tl = getTL(c);
+      const lb = cl(c, stocks);
+      ev.push(
+        { date: tl.virginStart, title: `Virgins start: ${lb}`, desc: '' },
+        { date: tl.progenyStart, title: `Progeny start: ${lb}`, desc: '' },
+      );
+      if (c.experimentDate) ev.push({ date: c.experimentDate, title: `Experiment: ${lb}`, desc: c.experimentType || '' });
+      (c.vials || []).forEach((v, i) => {
+        const vt = calcTL(v.setupDate, c.temperature);
+        ev.push(
+          { date: vt.virginStart, title: `Virgins V${i + 2}: ${lb}`, desc: '' },
+          { date: vt.progenyStart, title: `Progeny V${i + 2}: ${lb}`, desc: '' },
+        );
+      });
+    });
+    if (!ev.length) { toast.add('No events to export'); return; }
+    dlICS(ev, `flo-all-${today()}.ics`);
+    toast.add('Calendar exported');
+  }
+
+  function loadDemo() {
+    demoMode.current = true;
+    if (setIsDemoMode) setIsDemoMode(true);
+    const d = makeDemoData();
+    setStocks(d.stocks);
+    setCrosses(d.crosses);
+    if (d.virginBank && setVirginBank) setVirginBank(d.virginBank);
+    if (d.expBank && setExpBank) setExpBank(d.expBank);
+    if (d.transfers && setTransfers) setTransfers(d.transfers);
+    if (d.collections && setCollections) setCollections(d.collections);
+    toast.add('Demo data loaded - sync paused until reload');
+  }
+
+  function clearAll() {
+    setStocks([]);
+    setCrosses([]);
+    if (setExpBank) setExpBank({});
+    toast.add('All data cleared');
+  }
+
+  function changePin() {
+    USERS.forEach(u => localStorage.removeItem(`flo-pin-${u}`));
+    if (sbConfigured) {
+      supabasePush(stocks, crosses, []).then(() => window.location.reload()).catch(() => window.location.reload());
+    } else {
+      window.location.reload();
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Virgins Per Cross</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Number of virgins used when starting a cross from the bank.</p>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setVirginsPerCross(Math.max(1, virginsPerCross - 1))}
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold cursor-pointer"
+            style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>-</button>
+          <span className="text-2xl font-bold flex-1 text-center" style={{ color: 'var(--text-1)' }}>{virginsPerCross}</span>
+          <button onClick={() => setVirginsPerCross(virginsPerCross + 1)}
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold cursor-pointer"
+            style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)' }}>+</button>
+        </div>
+      </div>
+
+      {currentUser === 'Flo' && !adminUnlocked && (
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Admin</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Unlock with Flo's PIN to access sync, import/export, and data management.</p>
+        <div className="flex gap-2">
+          <Inp type="password" inputMode="numeric" maxLength="4" pattern="[0-9]*" value={adminPinInput} onChange={e => setAdminPinInput(e.target.value.replace(/\D/g, ''))} onKeyDown={e => { if (e.key === 'Enter') adminPinGate(); }} placeholder="PIN" style={{ width: 80, textAlign: 'center', letterSpacing: '0.3em' }} />
+          <Btn v="s" onClick={() => adminPinGate()}>Unlock</Btn>
+        </div>
+      </div>
+      )}
+
+      <VirginNotifSettings toast={toast} />
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Calendar Export</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>All cross milestones as .ics file.</p>
+        <Btn v="s" onClick={exportAllICS} className="w-full">Export All (.ics)</Btn>
+      </div>
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Background Effect</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Choose an animated background.</p>
+        <div className="grid grid-cols-3 gap-2">
+          {BG_TYPES.map(t => (
+            <button key={t} onClick={() => setBgEffect(t)}
+              className="px-3 py-2.5 text-xs font-semibold rounded-xl transition-all active:scale-95 cursor-pointer"
+              style={bgEffect === t
+                ? { background: 'var(--accent-glow)', color: 'var(--accent-2)', border: '1px solid rgba(139,92,246,0.3)' }
+                : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }
+              }>{BG_LABELS[t]}</button>
+          ))}
+        </div>
+      </div>
+
+      {currentUser === 'Flo' && adminUnlocked && (
+      <>
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Supabase Sync</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Sync stocks, crosses &amp; PINs to Supabase.</p>
+        <Inp value={sbUrl || SUPABASE_URL} onChange={e => { setSbUrl(e.target.value); resetSb(); }} placeholder="Supabase project URL" className="mb-2" />
+        <Inp value={sbKey || SUPABASE_KEY} onChange={e => { setSbKey(e.target.value); resetSb(); }} placeholder="Supabase anon key" type="password" className="mb-2" />
+        {sbConfigured && (
+          <div className="flex gap-2 mb-2">
+            <Btn v="s" onClick={() => {
+              setSyncStatus('Pushing...');
+              const pins = USERS.map(u => { const h = localStorage.getItem(`flo-pin-${u}`); return h ? { user: u, hash: h } : null; }).filter(Boolean);
+              supabasePush(stocks, crosses, pins).then(r => {
+                setSyncStatus('Pushed ' + (r.stockCount || 0) + ' stocks, ' + (r.crossCount || 0) + ' crosses');
+                toast.add('Data pushed to Supabase');
+              }).catch(e => { setSyncStatus('Push failed'); toast.add('Push failed: ' + e.message); });
+            }} className="flex-1">Push</Btn>
+            <Btn v="s" onClick={() => {
+              setSyncStatus('Pulling...');
+              supabasePull().then(remote => {
+                if (remote.stocks) setStocks(local => mergeStocks(local, remote.stocks));
+                if (remote.crosses) setCrosses(local => mergeCrosses(local, remote.crosses));
+                if (remote.pins) remote.pins.forEach(p => { if (p.user && p.hash && !localStorage.getItem(`flo-pin-${p.user}`)) localStorage.setItem(`flo-pin-${p.user}`, p.hash); });
+                setSyncStatus('Pulled ' + (remote.stocks || []).length + ' stocks, ' + (remote.crosses || []).length + ' crosses');
+                toast.add('Data pulled from Supabase');
+              }).catch(e => { setSyncStatus('Pull failed'); toast.add('Pull failed: ' + e.message); });
+            }} className="flex-1">Pull</Btn>
+          </div>
+        )}
+        {syncStatus && <p className="text-xs" style={{ color: 'var(--text-3)' }}>{syncStatus}</p>}
+      </div>
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Export Backup</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Download all data as JSON.</p>
+        <Btn v="s" onClick={exportJSON} className="w-full">Export JSON</Btn>
+      </div>
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Import Backup</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Load from a JSON backup. Replaces current data.</p>
+        <input type="file" accept=".json" ref={fileRef} onChange={importJSON} className="hidden" />
+        <Btn v="s" onClick={() => fileRef.current.click()} className="w-full">Import JSON</Btn>
+      </div>
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Demo Data</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Load sample stocks and crosses.</p>
+        <Btn v="s" onClick={() => setConfirmLoadDemo(true)} className="w-full">Load Demo Data</Btn>
+      </div>
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Clear All Data</p>
+        <Btn v="d" onClick={() => setConfirmClearAll(true)} className="w-full mt-2">Clear Everything</Btn>
+      </div>
+      </>
+      )}
+
+      <div className="card p-5">
+        <button onClick={() => setShowRef(!showRef)} className="flex items-center justify-between w-full touch">
+          <span className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>Quick Reference</span>
+          <span style={{ color: 'var(--text-3)' }}>{showRef ? '▴' : '▾'}</span>
+        </button>
+        {showRef && (
+          <div className="text-xs space-y-3 leading-relaxed mt-4" style={{ color: 'var(--text-3)' }}>
+            <p><b style={{ color: 'var(--text-2)' }}>25°C</b> - Virgins day 9–11, progeny day 11–15.</p>
+            <p><b style={{ color: 'var(--text-2)' }}>18°C</b> - Virgins day 17–19, progeny day 19–23.</p>
+            <p><b style={{ color: 'var(--text-2)' }}>Stocks (25°C)</b> - Flip every 2-3 weeks.</p>
+            <p><b style={{ color: 'var(--text-2)' }}>Stocks (18°C)</b> - Flip every 6 weeks.</p>
+            <p><b style={{ color: 'var(--text-2)' }}>Re-vial</b> - Move parents to new vial after 2-4d for more offspring.</p>
+            <p><b style={{ color: 'var(--text-2)' }}>Optogenetics</b> - CsChrimson/ChR2 need 4+ days on all-trans retinal food.</p>
+            <p><b style={{ color: 'var(--text-2)' }}>GCaMP</b> - Expression improves 3-5d post-eclosion.</p>
+            <p><b style={{ color: 'var(--text-2)' }}>Balancers</b> - FM7 (X), CyO (2nd), TM3/TM6B (3rd).</p>
+            <p><b style={{ color: 'var(--text-2)' }}>Nomenclature</b> - Semicolons separate chromosomes. Lowercase = recessive, Uppercase = dominant.</p>
+          </div>
+        )}
+      </div>
+
+      <div className="card p-5">
+        <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Change PIN</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Reset and set a new PIN.</p>
+        <Btn v="s" onClick={() => setConfirmResetPin(true)} className="w-full">Reset PIN</Btn>
+      </div>
+
+      <p className="text-[10px] text-center mt-4 mb-2" style={{ color: 'var(--text-3)' }}>Flomington</p>
+
+      <Confirm open={confirmClearAll} onOk={() => { setConfirmClearAll(false); clearAll(); }} onNo={() => setConfirmClearAll(false)}
+        title="Clear all data?" msg="This will permanently delete all stocks, crosses, and experiment data." />
+      <Confirm open={confirmLoadDemo} onOk={() => { setConfirmLoadDemo(false); loadDemo(); }} onNo={() => setConfirmLoadDemo(false)}
+        title="Load demo data?" msg="This will replace all current data. Sync will pause until you reload." okLabel="Load Demo" />
+      <Confirm open={confirmResetPin} onOk={() => { setConfirmResetPin(false); changePin(); }} onNo={() => setConfirmResetPin(false)}
+        title="Reset all user PINs?" msg="Everyone will need to set new PINs." okLabel="Reset" />
+      <Confirm open={!!pendingImport} onOk={() => { applyImport(); }} onNo={() => setPendingImport(null)}
+        title="Import data?" msg={`This will replace your current data with ${pendingImport ? (pendingImport.stocks?.length || 0) + ' stocks and ' + (pendingImport.crosses?.length || 0) + ' crosses' : ''} from the backup file.`} okLabel="Import" />
+
+    </div>
+  );
+}
+
+/* ========== MAIN APP ========== */
+/* ========== BACKGROUND EFFECTS ========== */
+const BG_TYPES = ['none', 'grainient', 'particles', 'squares', 'dots', 'snow'];
+const BG_LABELS = { none: 'None', grainient: 'Grainient', particles: 'Particles', squares: 'Squares', dots: 'Dot Grid', snow: 'Pixel Snow' };
+
+function BackgroundCanvas({ type }) {
+  const canvasRef = useRef(null);
+  const rafRef = useRef(null);
+  const glRef = useRef(null);
+
+  useEffect(() => {
+    if (!type || type === 'none') return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    let raf;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    const resize = () => {
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    if (type === 'grainient') {
+      // WebGL2 grainient shader
+      const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
+      if (!gl) return;
+      glRef.current = gl;
+
+      const vs = `#version 300 es
+        in vec2 position;
+        void main() { gl_Position = vec4(position, 0.0, 1.0); }`;
+
+      const fs = `#version 300 es
+        precision highp float;
+        uniform vec2 iResolution;
+        uniform float iTime;
+        out vec4 fragColor;
+        mat2 Rot(float a){float s=sin(a),c=cos(a);return mat2(c,-s,s,c);}
+        vec2 hash(vec2 p){p=vec2(dot(p,vec2(2127.1,81.17)),dot(p,vec2(1269.5,283.37)));return fract(sin(p)*43758.5453);}
+        float noise(vec2 p){vec2 i=floor(p),f=fract(p),u=f*f*(3.0-2.0*f);float n=mix(mix(dot(-1.0+2.0*hash(i),f),dot(-1.0+2.0*hash(i+vec2(1,0)),f-vec2(1,0)),u.x),mix(dot(-1.0+2.0*hash(i+vec2(0,1)),f-vec2(0,1)),dot(-1.0+2.0*hash(i+vec2(1,1)),f-vec2(1,1)),u.x),u.y);return 0.5+0.5*n;}
+        void main(){
+          float t=iTime*0.25;
+          vec2 uv=gl_FragCoord.xy/iResolution.xy;
+          float ratio=iResolution.x/iResolution.y;
+          vec2 tuv=uv-0.5;
+          tuv/=0.9;
+          float degree=noise(vec2(t*0.1,tuv.x*tuv.y)*2.0);
+          tuv.y*=1.0/ratio;
+          tuv*=Rot(radians((degree-0.5)*500.0+180.0));
+          tuv.y*=ratio;
+          float amp=50.0;
+          tuv.x+=sin(tuv.y*5.0+t*2.0)/amp;
+          tuv.y+=sin(tuv.x*7.5+t*2.0)/(amp*0.5);
+          vec3 c1=vec3(0.35,0.5,0.2);
+          vec3 c2=vec3(0.0,0.502,0.502);
+          vec3 c3=vec3(0.8,0.6,0.2);
+          mat2 br=Rot(radians(0.0));
+          float bx=(tuv*br).x;
+          vec3 l1=mix(c3,c2,smoothstep(-0.3,-0.1+0.3,bx));
+          vec3 l2=mix(c2,c1,smoothstep(-0.3,-0.1+0.3,bx));
+          vec3 col=mix(l1,l2,smoothstep(0.5,-0.3,tuv.y));
+          vec2 guv=uv*2.0+vec2(iTime*0.05);
+          float grain=fract(sin(dot(guv,vec2(12.9898,78.233)))*43758.5453);
+          col+=(grain-0.5)*0.1;
+          col=(col-0.5)*1.5+0.5;
+          col=clamp(col*0.35,0.0,1.0);
+          fragColor=vec4(col,1.0);
+        }`;
+
+      function makeShader(gl, type, src) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        return s;
+      }
+      const prog = gl.createProgram();
+      gl.attachShader(prog, makeShader(gl, gl.VERTEX_SHADER, vs));
+      gl.attachShader(prog, makeShader(gl, gl.FRAGMENT_SHADER, fs));
+      gl.linkProgram(prog);
+      gl.useProgram(prog);
+
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+      const pos = gl.getAttribLocation(prog, 'position');
+      gl.enableVertexAttribArray(pos);
+      gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+      const uRes = gl.getUniformLocation(prog, 'iResolution');
+      const uTime = gl.getUniformLocation(prog, 'iTime');
+      const t0 = performance.now();
+
+      const draw = () => {
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.uniform2f(uRes, canvas.width, canvas.height);
+        gl.uniform1f(uTime, (performance.now() - t0) * 0.001);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        raf = requestAnimationFrame(draw);
+      };
+      raf = requestAnimationFrame(draw);
+
+    } else if (type === 'particles') {
+      const ctx = canvas.getContext('2d');
+      const count = 80;
+      const pts = Array.from({ length: count }, () => ({
+        x: Math.random(), y: Math.random(), z: Math.random(),
+        vx: (Math.random() - 0.5) * 0.0003, vy: (Math.random() - 0.5) * 0.0003,
+        size: 1 + Math.random() * 2,
+        color: ['rgba(139,92,246,', 'rgba(167,139,250,', 'rgba(34,197,94,'][Math.floor(Math.random() * 3)],
+      }));
+      const draw = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        pts.forEach(p => {
+          p.x += p.vx; p.y += p.vy;
+          if (p.x < 0 || p.x > 1) p.vx *= -1;
+          if (p.y < 0 || p.y > 1) p.vy *= -1;
+          const alpha = 0.15 + p.z * 0.2;
+          ctx.beginPath();
+          ctx.arc(p.x * canvas.width, p.y * canvas.height, p.size * dpr, 0, Math.PI * 2);
+          ctx.fillStyle = p.color + alpha + ')';
+          ctx.fill();
+        });
+        raf = requestAnimationFrame(draw);
+      };
+      raf = requestAnimationFrame(draw);
+
+    } else if (type === 'squares') {
+      const ctx = canvas.getContext('2d');
+      const sz = 40 * dpr;
+      const offset = { x: 0, y: 0 };
+      const draw = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const startX = Math.floor(offset.x / sz) * sz;
+        const startY = Math.floor(offset.y / sz) * sz;
+        ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+        ctx.lineWidth = dpr;
+        for (let x = startX; x < canvas.width + sz; x += sz) {
+          for (let y = startY; y < canvas.height + sz; y += sz) {
+            ctx.strokeRect(x - (offset.x % sz), y - (offset.y % sz), sz, sz);
+          }
+        }
+        offset.x = (offset.x - 0.3 * dpr + sz) % sz;
+        offset.y = (offset.y - 0.3 * dpr + sz) % sz;
+        raf = requestAnimationFrame(draw);
+      };
+      raf = requestAnimationFrame(draw);
+
+    } else if (type === 'dots') {
+      const ctx = canvas.getContext('2d');
+      const gap = 32 * dpr;
+      const dotR = 2 * dpr;
+      const draw = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (let x = gap; x < canvas.width; x += gap) {
+          for (let y = gap; y < canvas.height; y += gap) {
+            ctx.beginPath();
+            ctx.arc(x, y, dotR, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(139,92,246,0.08)';
+            ctx.fill();
+          }
+        }
+        raf = requestAnimationFrame(draw);
+      };
+      raf = requestAnimationFrame(draw);
+
+    } else if (type === 'snow') {
+      const ctx = canvas.getContext('2d');
+      const count = 120;
+      const flakes = Array.from({ length: count }, () => ({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: (1 + Math.random() * 2) * dpr,
+        speed: (0.3 + Math.random() * 0.7) * dpr,
+        drift: (Math.random() - 0.5) * 0.3 * dpr,
+        alpha: 0.05 + Math.random() * 0.1,
+      }));
+      const draw = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        flakes.forEach(f => {
+          f.y += f.speed;
+          f.x += f.drift;
+          if (f.y > canvas.height) { f.y = -f.size; f.x = Math.random() * canvas.width; }
+          if (f.x > canvas.width) f.x = 0;
+          if (f.x < 0) f.x = canvas.width;
+          ctx.fillStyle = `rgba(167,139,250,${f.alpha})`;
+          ctx.fillRect(Math.floor(f.x), Math.floor(f.y), f.size, f.size);
+        });
+        raf = requestAnimationFrame(draw);
+      };
+      raf = requestAnimationFrame(draw);
+    }
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', resize);
+    };
+  }, [type]);
+
+  if (!type || type === 'none') return null;
+  return <canvas key={type} ref={canvasRef} style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none' }} />;
+}
+
+/* ========== NAV ICONS ========== */
+const IconHome = (active) => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? '#a78bfa' : '#52525b'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    <polyline points="9 22 9 12 15 12 15 22" />
+  </svg>
+);
+const IconStocks = (active) => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? '#a78bfa' : '#52525b'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" />
+    <line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
+  </svg>
+);
+const IconSettings = (active) => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? '#a78bfa' : '#52525b'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  </svg>
+);
+
+/* ========== LABEL PRINTING ========== */
+const LABEL_FORMATS = {
+  'L7651': { name: 'Avery J8651 / L7651', cols: 5, rows: 13, labelW: 38.1, labelH: 21.2, marginTop: 10.7, marginLeft: 4.75, gapX: 2.5, gapY: 0, pageW: 210, pageH: 297 },
+  'L7161': { name: 'Avery J8161 / L7161', cols: 3, rows: 6, labelW: 63.5, labelH: 46.6, marginTop: 8.7, marginLeft: 7.21, gapX: 2.54, gapY: 0, pageW: 210, pageH: 297 },
+};
+
+function crossLabelText(c, stocks) {
+  const name = `♀ ${sn(stocks, c.parentA)}<br>x<br>♂ ${sn(stocks, c.parentB)}`;
+  const tl = getTL(c);
+  const nw = d => d ? `<span style="white-space:nowrap">${d}</span>` : '';
+  let action = '';
+  if (c.status === 'waiting for virgins' || c.status === 'collecting virgins') {
+    action = `Collect virgins from ${nw(tl.virginStart)}`;
+  } else if (c.status === 'waiting for progeny' || c.status === 'collecting progeny') {
+    action = `Collect progeny from ${nw(tl.progenyStart)}`;
+  } else if (c.status === 'screening') {
+    action = 'Screening';
+  } else if (c.status === 'ripening') {
+    action = 'Ripening';
+  } else if (c.status === 'set up') {
+    action = `Set up ${nw(c.setupDate || '')}`;
+  } else if (c.status === 'done') {
+    action = 'Done';
+  }
+  return { name, action, temp: '' };
+}
+
+function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCrosses, setPrintListCrosses, printListVirgins, setPrintListVirgins, printListExps, setPrintListExps, stocks, crosses, expBank, toast }) {
+  const [format, setFormat] = useState('L7161');
+  const [showGrid, setShowGrid] = useState(false);
+  const [showQR, setShowQR] = useState(true);
+  const [skipLabels, setSkipLabels] = useState(0);
+
+  if (!open) return null;
+  const stockItems = printList.map(id => stocks.find(s => s.id === id)).filter(Boolean);
+  const crossItems = (printListCrosses || []).map(id => (crosses || []).find(c => c.id === id)).filter(Boolean);
+  const virginItems = (printListVirgins || []).map(id => stocks.find(s => s.id === id)).filter(Boolean);
+  const expItems = (printListExps || []).map(id => {
+    const entry = expBank?.[id];
+    if (!entry) return null;
+    const src = entry.source === 'cross' ? crosses.find(c => c.id === id) : stocks.find(s => s.id === id);
+    const name = entry.source === 'cross' ? (src ? `${stocks.find(s => s.id === src.parentA)?.name || '?'} x ${stocks.find(s => s.id === src.parentB)?.name || '?'}` : id) : (src?.name || id);
+    const genotype = entry.source === 'cross' ? '' : (src?.genotype || '');
+    return { id, name, genotype, source: entry.source };
+  }).filter(Boolean);
+  const totalCount = stockItems.length + crossItems.length + virginItems.length + expItems.length;
+  const spec = LABEL_FORMATS[format];
+
+  function doPrint() {
+    if (totalCount === 0) return;
+    const w = window.open('', '_blank');
+    if (!w) { toast.add('Pop-up blocked - allow pop-ups for this site'); return; }
+
+    const qrBase = (window.location.origin + window.location.pathname).replace('https://', '');
+
+    // Build unified label data
+    const esc = t => t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const allLabels = [];
+    stockItems.forEach(s => {
+      const hasSibling = stocks.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'));
+      allLabels.push({ id: 's-' + s.id, name: esc(s.name + (s.vcs?.enabled ? ' [VCS]' : '')), copies: hasSibling ? (s.copies || 1) : 0, line2: esc(s.genotype || ''), line3: '', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
+    });
+    crossItems.forEach(c => {
+      const info = crossLabelText(c, stocks);
+      allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: showQR ? qrBase + '?c=' + c.id.slice(0, 8) : null, isCross: true });
+    });
+    virginItems.forEach(s => {
+      allLabels.push({ id: 'v-' + s.id, name: esc(s.name), line2: esc(s.genotype || ''), line3: '\u24CB', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
+    });
+    expItems.forEach(e => {
+      const eqr = showQR ? qrBase + (e.source === 'cross' ? '?c=' : '?s=') + e.id.slice(0, 8) : null;
+      allLabels.push({ id: 'e-' + e.id, name: esc(e.name), line2: esc(e.genotype), line3: '\u24BA', qrUrl: eqr });
+    });
+
+    const perPage = spec.cols * spec.rows;
+    const skip = Math.max(0, Math.min(skipLabels, perPage - 1));
+    const pages = [];
+    // Add empty placeholders for skipped labels on first page
+    const padded = [...Array(skip).fill(null), ...allLabels];
+    for (let i = 0; i < padded.length; i += perPage) {
+      pages.push(padded.slice(i, i + perPage));
+    }
+
+    const pagesHtml = pages.map((pageItems) => {
+      const cells = pageItems.map((lb) => {
+        if (!lb) return '<div class="label"></div>';
+        return `<div class="label">
+          ${lb.qrUrl ? '<div class="label-qr" id="qr-' + lb.id + '"></div>' : ''}
+          <div class="label-text">
+            <div class="label-name">${lb.name}${lb.copies ? ' <span class="label-copy">#' + lb.copies + '</span>' : ''}</div>
+            ${lb.line2 ? '<div class="label-geno">' + lb.line2 + '</div>' : ''}
+            ${lb.line3 ? '<div class="label-info">' + lb.line3 + '</div>' : ''}
+          </div>
+        </div>`;
+      }).join('\n');
+      return `<div class="page">${cells}</div>`;
+    }).join('\n');
+
+    const qrData = JSON.stringify(allLabels.filter(lb => lb.qrUrl).map(lb => ({ id: lb.id, url: lb.qrUrl })));
+
+    // Scale sizes based on label dimensions
+    const isLarge = spec.labelH > 30;
+    const qrSize = isLarge ? 16 : 8;
+    const pad = isLarge ? '2mm 5mm 3.5mm 3mm' : '0.8mm 2mm 2.8mm 1mm';
+    const gap = isLarge ? '2mm' : '1mm';
+    const nameSize = isLarge ? '9pt' : '6.5pt';
+    const genoSize = isLarge ? '6pt' : '4.5pt';
+    const genoClamp = isLarge ? 10 : 3;
+    const infoSize = isLarge ? '6pt' : '4.5pt';
+
+    w.document.write(`<!DOCTYPE html><html><head><title>Flomington Labels</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"><\/script>
+<style>
+@page { size: A4; margin: 0; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: ${spec.pageW}mm; }
+body { font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.page {
+  width: ${spec.pageW}mm; height: ${spec.pageH}mm;
+  padding-top: ${spec.marginTop}mm;
+  padding-left: ${spec.marginLeft}mm;
+  display: grid;
+  grid-template-columns: repeat(${spec.cols}, ${spec.labelW}mm);
+  grid-template-rows: repeat(${spec.rows}, ${spec.labelH}mm);
+  column-gap: ${spec.gapX}mm;
+  row-gap: ${spec.gapY}mm;
+  page-break-after: always;
+  overflow: hidden;
+}
+.page:last-child { page-break-after: auto; }
+.label {
+  width: ${spec.labelW}mm; height: ${spec.labelH}mm;
+  overflow: hidden;
+  padding: ${pad};
+  display: flex; flex-direction: row; align-items: flex-end; gap: ${gap};
+  border: ${showGrid ? '0.3pt dashed #ccc' : 'none'};
+}
+.label-qr { flex-shrink: 0; width: ${qrSize}mm; height: ${qrSize}mm; }
+.label-qr svg { display: block; width: ${qrSize}mm; height: ${qrSize}mm; }
+.label-text { flex: 1; min-width: 0; overflow: hidden; }
+.label-name { font-size: ${nameSize}; font-weight: bold; line-height: 1.2; word-break: break-word; }
+.label-copy { font-weight: normal; color: #aaa; }
+.label-geno { font-size: ${genoSize}; font-family: 'Courier New', monospace; line-height: 1.2; word-break: break-all; color: #444; margin-top: 0.5mm; }
+.label-info { font-size: ${infoSize}; color: #666; line-height: 1.2; margin-top: 0.3mm; }
+@media print {
+  body { margin: 0; }
+  .page { break-after: page; }
+  .page:last-child { break-after: auto; }
+}
+</style></head><body>${pagesHtml}
+<script>
+var items = ${qrData};
+var qrSz = '${qrSize}mm';
+items.forEach(function(s) {
+  var el = document.getElementById('qr-' + s.id);
+  if (!el) return;
+  try {
+    var qr = qrcode(0, 'H');
+    qr.addData(s.url);
+    qr.make();
+    el.innerHTML = qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true });
+    var svg = el.querySelector('svg');
+    if (svg) { svg.setAttribute('width', qrSz); svg.setAttribute('height', qrSz); svg.style.display = 'block'; }
+  } catch(e) { el.textContent = ''; }
+});
+setTimeout(function(){ window.print(); }, 500);
+<\/script></body></html>`);
+    w.document.close();
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Print Labels" wide>
+      <div className="mb-4">
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <p className="text-xs" style={{ color: 'var(--text-3)' }}>{totalCount} label{totalCount !== 1 ? 's' : ''}</p>
+          <div className="flex-1" />
+          <select value={format} onChange={e => setFormat(e.target.value)}
+            className="compact px-2 py-1.5 font-semibold rounded-lg"
+            style={{ color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)', appearance: 'auto' }}>
+            {Object.entries(LABEL_FORMATS).map(([k, v]) => (
+              <option key={k} value={k}>{k} ({v.labelW}x{v.labelH}mm, {v.cols * v.rows}/page)</option>
+            ))}
+          </select>
+          <div onClick={() => setShowQR(!showQR)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', color: showQR ? '#5eead4' : 'var(--text-3)', border: showQR ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showQR ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
+            {showQR ? '✓ QR' : 'QR'}
+          </div>
+          <div onClick={() => setShowGrid(!showGrid)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', color: showGrid ? '#5eead4' : 'var(--text-3)', border: showGrid ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showGrid ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
+            {showGrid ? '✓ Grid' : 'Grid'}
+          </div>
+          <div className="compact flex items-center gap-1 font-semibold rounded-lg"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', border: skipLabels > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: skipLabels > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)' }}>
+            <span>Skip</span>
+            <input type="number" min="0" max={spec.cols * spec.rows - 1} value={skipLabels} onChange={e => setSkipLabels(Math.max(0, parseInt(e.target.value) || 0))}
+              className="compact" style={{ width: '20px', textAlign: 'center', outline: 'none', fontWeight: 600, padding: 0, margin: 0, lineHeight: '1' }} />
+          </div>
+        </div>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Feed label paper with arrow pointing right →</p>
+
+        {totalCount === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-sm" style={{ color: 'var(--text-3)' }}>No labels queued</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-3)' }}>Tap the printer icon in stock, cross, virgin, or exp entries to add them</p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[40vh] overflow-y-auto mb-4">
+            {stockItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-3)' }}>Stocks</p>}
+            {stockItems.map(s => (
+              <div key={s.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                  {s.genotype && <p className="text-xs mono truncate" style={{ color: 'var(--text-3)' }}>{s.genotype}</p>}
+                </div>
+                <button onClick={() => setPrintList(p => p.filter(x => x !== s.id))} className="touch shrink-0 p-1.5 rounded-lg transition-all active:scale-90"
+                  style={{ color: 'var(--text-3)' }} title="Remove">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg>
+                </button>
+              </div>
+            ))}
+            {crossItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Crosses</p>}
+            {crossItems.map(c => {
+              const info = crossLabelText(c, stocks);
+              return (
+                <div key={c.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-1)' }}>{info.name}</p>
+                    <p className="text-xs truncate" style={{ color: 'var(--text-3)' }}>{info.action}</p>
+                  </div>
+                  <button onClick={() => setPrintListCrosses(p => p.filter(x => x !== c.id))} className="touch shrink-0 p-1.5 rounded-lg transition-all active:scale-90"
+                    style={{ color: 'var(--text-3)' }} title="Remove">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg>
+                  </button>
+                </div>
+              );
+            })}
+            {virginItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Virgins {'\u24CB'}</p>}
+            {virginItems.map(s => (
+              <div key={'v-'+s.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                  {s.genotype && <p className="text-xs mono truncate" style={{ color: 'var(--text-3)' }}>{s.genotype}</p>}
+                </div>
+                <button onClick={() => setPrintListVirgins(p => p.filter(x => x !== s.id))} className="touch shrink-0 p-1.5 rounded-lg transition-all active:scale-90"
+                  style={{ color: 'var(--text-3)' }} title="Remove">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg>
+                </button>
+              </div>
+            ))}
+            {expItems.length > 0 && <p className="text-[10px] uppercase tracking-wider font-semibold mt-2" style={{ color: 'var(--text-3)' }}>Experiments {'\u24BA'}</p>}
+            {expItems.map(e => (
+              <div key={'e-'+e.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-1)' }}>{e.name}</p>
+                  {e.genotype && <p className="text-xs mono truncate" style={{ color: 'var(--text-3)' }}>{e.genotype}</p>}
+                </div>
+                <button onClick={() => setPrintListExps(p => p.filter(x => x !== e.id))} className="touch shrink-0 p-1.5 rounded-lg transition-all active:scale-90"
+                  style={{ color: 'var(--text-3)' }} title="Remove">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-2">
+        <Btn onClick={doPrint} disabled={totalCount === 0} className="flex-1">Print {totalCount > 0 ? `(${totalCount})` : ''}</Btn>
+        {totalCount > 0 && <Btn v="d" onClick={() => { setPrintList([]); setPrintListCrosses([]); setPrintListVirgins([]); setPrintListExps([]); toast.add('Print list cleared'); }}>Clear All</Btn>}
+        <Btn v="s" onClick={onClose}>Close</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ========== AMBIENT FLY - desktop only, flies in the margins ========== */
+// Double-click the page background to force-spawn a fly
+function AmbientFly() {
+  const flyRef = useRef(null);
+  const [visible, setVisible] = useState(false);
+  const spawnRef = useRef(null); // exposed so double-click can trigger
+
+  useEffect(() => {
+    // Desktop only: skip if viewport < 1024px
+    if (window.innerWidth < 1024) return;
+
+    let raf, timeout;
+    const FLY_SIZE = 32;
+    const SPEED = 85; // constant pixels per second
+    const SAMPLES = 2000; // arc-length table resolution
+
+    // Path = linear drift (entry→exit) + 2 gentle low-frequency sine waves.
+    // Only 2 waves with low frequencies = big lazy swooping loops, no tight turns.
+    // The max oscillation speed is capped below 40% of drift speed so the fly
+    // never reverses or doubles back - just gentle sweeping curves.
+    function generateFlight() {
+      const w = window.innerWidth, h = window.innerHeight;
+      const centerW = Math.min(1152, w * 0.9);
+      const marginSize = Math.max((w - centerW) / 2, 60);
+      const side = Math.random() < 0.5 ? 'left' : 'right';
+      const marginCenter = side === 'left' ? marginSize * 0.5 : w - marginSize * 0.5;
+
+      // Entry and exit - always off-screen, biased to opposite vertical edges
+      // so the fly traverses a long path through the margin
+      const entryTop = Math.random() < 0.5;
+      const entry = {
+        x: marginCenter + (Math.random() - 0.5) * marginSize * 0.4,
+        y: entryTop ? -50 : h + 50,
+      };
+      const exit = {
+        x: marginCenter + (Math.random() - 0.5) * marginSize * 0.4,
+        y: entryTop ? h + 50 : -50, // exit opposite side for long traversal
+      };
+
+      // Drift length determines safe oscillation amplitude
+      const driftLen = Math.sqrt((exit.x - entry.x) ** 2 + (exit.y - entry.y) ** 2);
+
+      // 2 low-frequency waves per axis - gentle and loopy
+      // Frequencies: 1-2.5 full cycles over the path (low = wide loops)
+      // Amplitudes: capped so oscillation velocity stays well below drift velocity
+      const maxAmp = Math.min(marginSize * 0.4, driftLen * 0.06);
+      const xWave = {
+        freq: 1.0 + Math.random() * 1.5,   // 1–2.5 cycles
+        amp: maxAmp * (0.6 + Math.random() * 0.4),
+        phase: Math.random() * Math.PI * 2,
+      };
+      const yWave = {
+        freq: 1.5 + Math.random() * 1.0,   // 1.5–2.5 cycles (slightly different = variety)
+        amp: 60 + Math.random() * 60,       // 60–120px lateral swing
+        phase: Math.random() * Math.PI * 2,
+      };
+
+      return { entry, exit, xWave, yWave };
+    }
+
+    // Evaluate position at parametric t in [0, 1]
+    function evalAt(f, t) {
+      // Linear drift from entry to exit
+      let x = f.entry.x + (f.exit.x - f.entry.x) * t;
+      let y = f.entry.y + (f.exit.y - f.entry.y) * t;
+      // Smooth window: fades oscillations to zero at entry/exit (no jerk at edges)
+      const win = Math.sin(t * Math.PI);
+      // Gentle oscillations perpendicular to drift
+      x += f.xWave.amp * Math.sin(f.xWave.freq * t * Math.PI * 2 + f.xWave.phase) * win;
+      y += f.yWave.amp * Math.sin(f.yWave.freq * t * Math.PI * 2 + f.yWave.phase) * win;
+      return { x, y };
+    }
+
+    // Build arc-length lookup table: sample the path finely, accumulate distance
+    function buildArcTable(flight) {
+      const table = new Float64Array(SAMPLES + 1);
+      table[0] = 0;
+      let prev = evalAt(flight, 0);
+      for (let i = 1; i <= SAMPLES; i++) {
+        const t = i / SAMPLES;
+        const pt = evalAt(flight, t);
+        const dx = pt.x - prev.x, dy = pt.y - prev.y;
+        table[i] = table[i - 1] + Math.sqrt(dx * dx + dy * dy);
+        prev = pt;
+      }
+      return table;
+    }
+
+    // Given distance traveled, return parametric t via binary search on arc table
+    function distToT(arcTable, dist) {
+      const totalLen = arcTable[SAMPLES];
+      if (dist <= 0) return 0;
+      if (dist >= totalLen) return 1;
+      let lo = 0, hi = SAMPLES;
+      while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1;
+        if (arcTable[mid] < dist) lo = mid; else hi = mid;
+      }
+      const frac = (dist - arcTable[lo]) / (arcTable[hi] - arcTable[lo] || 1);
+      return (lo + frac) / SAMPLES;
+    }
+
+    function startFlight() {
+      const flight = generateFlight();
+      const arcTable = buildArcTable(flight);
+      const totalLen = arcTable[SAMPLES];
+      let dist = 0;
+      let lastTime = null;
+      setVisible(true);
+
+      function tick(now) {
+        if (!lastTime) { lastTime = now; raf = requestAnimationFrame(tick); return; }
+        const dtSec = Math.min((now - lastTime) / 1000, 0.05);
+        lastTime = now;
+        dist += SPEED * dtSec;
+
+        if (dist >= totalLen) {
+          setVisible(false);
+          timeout = setTimeout(startFlight, 60000 + Math.random() * 84000); // 1–2.4 min
+          return;
+        }
+
+        const t = distToT(arcTable, dist);
+        const pos = evalAt(flight, t);
+        // Heading from analytical derivative approximation (finite diff on smooth curve)
+        const eps = 0.0005;
+        const next = evalAt(flight, Math.min(t + eps, 1));
+        const ang = Math.atan2(next.y - pos.y, next.x - pos.x) * (180 / Math.PI) + 90;
+
+        if (flyRef.current) {
+          flyRef.current.style.transform = `translate(${pos.x - FLY_SIZE/2}px, ${pos.y - FLY_SIZE/2}px) rotate(${ang}deg)`;
+        }
+        raf = requestAnimationFrame(tick);
+      }
+      raf = requestAnimationFrame(tick);
+    }
+
+    // Expose spawn for double-click on the date
+    window.__spawnFly = () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timeout);
+      startFlight();
+    };
+
+    // First appearance after 1–2.4 min
+    timeout = setTimeout(startFlight, 60000 + Math.random() * 84000);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timeout);
+      delete window.__spawnFly;
+    };
+  }, []);
+
+  // Don't render on mobile at all
+  if (typeof window !== 'undefined' && window.innerWidth < 1024) return null;
+
+  return (
+    <React.Fragment>
+      <style>{`
+        @keyframes afwing { 0%,100% { transform: scaleX(1); } 50% { transform: scaleX(0.15); } }
+      `}</style>
+      <div ref={flyRef} style={{
+        position: 'fixed', top: 0, left: 0, zIndex: 5,
+        pointerEvents: 'none', willChange: 'transform',
+        opacity: visible ? 0.55 : 0, transition: 'opacity 0.6s',
+      }}>
+        <svg width="32" height="32" viewBox="0 0 44 44" fill="none">
+          <ellipse cx="12" cy="22" rx="10" ry="4.5" fill="#c4b5fd" opacity="0.4" transform="rotate(-15 18 20)"
+            style={{ transformOrigin: '22px 20px', animation: 'afwing 60ms linear infinite' }} />
+          <ellipse cx="32" cy="22" rx="10" ry="4.5" fill="#c4b5fd" opacity="0.4" transform="rotate(15 26 20)"
+            style={{ transformOrigin: '22px 20px', animation: 'afwing 60ms linear infinite' }} />
+          <ellipse cx="22" cy="28" rx="5" ry="8" fill="#7c3aed" opacity="0.85"/>
+          <ellipse cx="22" cy="20" rx="4.5" ry="4.5" fill="#8b5cf6"/>
+          <circle cx="22" cy="13" r="3.5" fill="#a78bfa"/>
+          <circle cx="20" cy="12" r="1.6" fill="#ef4444"/>
+          <circle cx="24" cy="12" r="1.6" fill="#ef4444"/>
+          <circle cx="19.5" cy="11.5" r="0.5" fill="#fca5a5" opacity="0.7"/>
+          <circle cx="23.5" cy="11.5" r="0.5" fill="#fca5a5" opacity="0.7"/>
+          <path d="M20.5 10.5 Q18 6 16 5" stroke="#a78bfa" strokeWidth="0.6" fill="none" opacity="0.6"/>
+          <path d="M23.5 10.5 Q26 6 28 5" stroke="#a78bfa" strokeWidth="0.6" fill="none" opacity="0.6"/>
+          <path d="M18.5 19 Q15 22 12 24" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+          <path d="M25.5 19 Q29 22 32 24" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+          <path d="M18 22 Q14 25 11 28" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+          <path d="M26 22 Q30 25 33 28" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+          <path d="M19 25 Q15 29 13 32" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+          <path d="M25 25 Q29 29 31 32" stroke="#7c3aed" strokeWidth="0.7" fill="none" opacity="0.5"/>
+          <ellipse cx="22" cy="26" rx="4.2" ry="0.6" fill="#6d28d9" opacity="0.3"/>
+          <ellipse cx="22" cy="29" rx="3.5" ry="0.5" fill="#6d28d9" opacity="0.3"/>
+          <ellipse cx="22" cy="32" rx="2.5" ry="0.4" fill="#6d28d9" opacity="0.3"/>
+        </svg>
+      </div>
+    </React.Fragment>
+  );
+}
+
+function App() {
+  const [currentUser, setCurrentUser] = useLS('flo-user', 'Flo');
+  const [locked, setLocked] = useState(() => {
+    if (!localStorage.getItem(`flo-pin-${currentUser}`)) return true;
+    return false;
+  });
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  useEffect(() => {
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []);
+  const [pendingUser, setPendingUser] = useState(null);
+  const [tab, setTab] = useState('home');
+  const [stocks, setStocks] = useLS('flo-stocks', []);
+  const [crosses, setCrosses] = useLS('flo-crosses', []);
+  const [bgEffect, setBgEffect] = useLS('flo-bg', 'grainient');
+  useEffect(() => { if (localStorage.getItem('flo-bg') === '"none"') { setBgEffect('grainient'); } }, []);
+  const [virginBank, setVirginBank] = useLS(`flo-virgins-${currentUser}`, {});
+  const [expBank, setExpBank] = useLS(`flo-exp-${currentUser}`, {});
+  const [virginsPerCross, setVirginsPerCross] = useLS('flo-vpc', 5);
+  const [transfers, setTransfers] = useLS('flo-transfers', []);
+  const [collections, setCollections] = useLS('flo-collections', DEFAULT_CATS);
+  // Derive collections from stock categories - add missing, remove empty
+  useEffect(() => {
+    const stockCats = new Set(stocks.map(s => s.category).filter(Boolean));
+    const missing = [...stockCats].filter(c => !collections.includes(c));
+    const stale = collections.filter(c => c !== 'No Collection' && !stockCats.has(c));
+    if (missing.length > 0 || stale.length > 0) {
+      let next = collections.filter(c => !stale.includes(c));
+      const idx = next.indexOf('No Collection');
+      missing.forEach(c => { if (idx >= 0) next.splice(idx, 0, c); else next.push(c); });
+      if (!next.includes('No Collection')) next.push('No Collection');
+      setCollections(next);
+    }
+  }, [stocks]);
+  // Backfill flybaseId for Bloomington stocks that have a sourceId but no flybaseId
+  useEffect(() => {
+    const need = stocks.filter(s => s.source === 'Bloomington' && s.sourceId && !s.flybaseId);
+    if (need.length > 0) setStocks(p => p.map(s => s.source === 'Bloomington' && s.sourceId && !s.flybaseId ? { ...s, flybaseId: `FBst${s.sourceId.replace(/\D/g, '').padStart(7, '0')}` } : s));
+  }, []);
+  const STOCK_CATS = collections;
+  const [printList, setPrintList] = useState([]);
+  const [printListCrosses, setPrintListCrosses] = useState([]);
+  const [printListVirgins, setPrintListVirgins] = useState([]);
+  const [printListExps, setPrintListExps] = useState([]);
+  const [printOpen, setPrintOpen] = useState(false);
+  const [bulkBarActive, setBulkBarActive] = useState(false);
+  const [sbUrl, setSbUrl] = useLS('flo-sb-url', '');
+  const [sbKey, setSbKey] = useLS('flo-sb-key', '');
+  const sbConfigured = !!(sbUrl || SUPABASE_URL) && !!(sbKey || SUPABASE_KEY);
+  const [syncStatus, setSyncStatus] = useState('');
+  const syncTimer = useRef(null);
+  const realtimeUpdateRef = useRef(false);
+
+  const [pinVersion, setPinVersion] = useState(0);
+  const initialPushBlocked = useRef(true);
+  const demoMode = useRef(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+
+  // Pull from Supabase FIRST on load - blocks UI until done
+  const hasPulled = useRef(false);
+  useEffect(() => {
+    if (!sbConfigured || hasPulled.current) return;
+    hasPulled.current = true;
+    setSyncStatus('Syncing...');
+    supabasePull().then(remote => {
+      let vcsBackfilled = false;
+      if (remote.stocks) setStocks(prev => {
+        const localMap = new Map(prev.map(s => [s.id, s]));
+        const merged = remote.stocks.map(rs => {
+          const local = localMap.get(rs.id);
+          if (local?.vcs && !rs.vcs) { vcsBackfilled = true; return { ...rs, vcs: local.vcs }; }
+          return rs;
+        });
+        return merged;
+      });
+      if (remote.crosses) setCrosses(remote.crosses);
+      if (remote.pins && remote.pins.length > 0) {
+        let pinSynced = false;
+        remote.pins.forEach(p => {
+          if (p.user && p.hash && !localStorage.getItem(`flo-pin-${p.user}`)) {
+            localStorage.setItem(`flo-pin-${p.user}`, p.hash);
+            pinSynced = true;
+          }
+        });
+        if (pinSynced && localStorage.getItem(`flo-pin-${currentUser}`)) {
+          setLocked(false);
+        }
+      }
+      // Pull virgin bank and merge with local
+      supabasePullVirginBank(currentUser).then(remoteVB => {
+        setVirginBank(prev => {
+          const merged = { ...remoteVB };
+          Object.entries(prev).forEach(([k, v]) => {
+            if (v > 0) merged[k] = Math.max(merged[k] || 0, v);
+          });
+          return merged;
+        });
+      });
+      // Pull exp bank and merge with local
+      supabasePullExpBank(currentUser).then(remoteEB => {
+        setExpBank(prev => {
+          const merged = { ...remoteEB };
+          Object.entries(prev).forEach(([k, v]) => {
+            if ((v.m || 0) + (v.f || 0) > 0) {
+              merged[k] = {
+                m: Math.max((merged[k]?.m || 0), v.m || 0),
+                f: Math.max((merged[k]?.f || 0), v.f || 0),
+                source: v.source || merged[k]?.source || 'cross',
+              };
+            }
+          });
+          return merged;
+        });
+      });
+      // Pull transfers and merge with local (local wins for status)
+      supabasePullTransfers().then(remoteTransfers => {
+        setTransfers(prev => {
+          const localMap = new Map(prev.map(t => [t.id, t]));
+          const merged = [...prev];
+          remoteTransfers.forEach(rt => {
+            const local = localMap.get(rt.id);
+            if (!local) {
+              merged.push(rt);
+            } else if (local.status === 'pending' && rt.status !== 'pending') {
+              // Remote has been resolved but local hasn't - take remote
+              const idx = merged.findIndex(t => t.id === rt.id);
+              if (idx >= 0) merged[idx] = { ...rt, seen: local.seen };
+            }
+          });
+          // Auto-cleanup: remove resolved+seen transfers older than 7 days
+          const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+          const staleIds = [];
+          const cleaned = merged.filter(t => {
+            const isStale = t.status !== 'pending' && t.seen && new Date(t.createdAt).getTime() < sevenDaysAgo;
+            if (isStale) staleIds.push(t.id);
+            return !isStale;
+          });
+          // Delete stale transfers from Supabase
+          if (staleIds.length > 0) {
+            const sb = getSb();
+            if (sb) sb.from('transfers').delete().in('id', staleIds).then(() => {});
+          }
+          return cleaned;
+        });
+      });
+      setSyncStatus('Synced ' + new Date().toLocaleTimeString());
+      setTimeout(() => {
+        initialPushBlocked.current = false;
+        if (vcsBackfilled) {
+          try {
+            const st = JSON.parse(localStorage.getItem('flo-stocks') || '[]');
+            supabasePush(st, null, null).catch(() => {});
+          } catch {}
+        }
+      }, 2000);
+      // Backfill Janelia lines for existing Bloomington stocks
+      const toCheck = (remote.stocks || []).filter(s => s.source === 'Bloomington' && s.sourceId && !s.janeliaLine);
+      if (toCheck.length > 0) {
+        (async () => {
+          let updated = false;
+          for (const s of toCheck) {
+            const info = await fetchBDSCInfo(s.sourceId);
+            if (info?.janeliaLine) {
+              s.janeliaLine = info.janeliaLine;
+              updated = true;
+            }
+          }
+          if (updated) setStocks(prev => prev.map(s => {
+            const match = toCheck.find(t => t.id === s.id && t.janeliaLine);
+            return match ? { ...s, janeliaLine: match.janeliaLine } : s;
+          }));
+        })();
+      }
+    }).catch(() => {
+      setSyncStatus('Pull failed');
+      initialPushBlocked.current = false;
+    });
+  }, [sbConfigured]);
+
+  // Auto-push to Supabase on changes (debounced)
+  const pendingPush = useRef(false);
+  const pushNow = useRef(() => {});
+  useEffect(() => {
+    if (!sbConfigured || initialPushBlocked.current || demoMode.current) return;
+    if (realtimeUpdateRef.current) { realtimeUpdateRef.current = false; if (!pendingPush.current) return; }
+    pendingPush.current = true;
+    clearTimeout(syncTimer.current);
+    const doPush = () => {
+      pendingPush.current = false;
+      const pins = USERS.map(u => {
+        const h = localStorage.getItem(`flo-pin-${u}`);
+        return h ? { user: u, hash: h } : null;
+      }).filter(Boolean);
+      supabasePush(stocks, crosses, pins).then(() => {
+        supabaseSyncDeletes('stocks', new Set(stocks.map(s => s.id)));
+        supabaseSyncDeletes('crosses', new Set(crosses.map(c => c.id)));
+        setSyncStatus('Synced ' + new Date().toLocaleTimeString());
+      }).catch(() => {
+        setSyncStatus('Push failed – retrying...');
+        setTimeout(doPush, 5000);
+      });
+      supabasePushVirginBank(currentUser, virginBank).catch(e => console.error('Virgin bank push error:', e));
+      supabasePushExpBank(currentUser, expBank).catch(e => console.error('Exp bank push error:', e));
+      supabasePushTransfers(transfers).catch(e => console.error('Transfers push error:', e));
+    };
+    pushNow.current = doPush;
+    syncTimer.current = setTimeout(doPush, 3000);
+  }, [stocks, crosses, sbConfigured, pinVersion, virginBank, expBank, transfers, currentUser]);
+
+  // Flush pending push on page close/hide
+  useEffect(() => {
+    const flush = () => { if (pendingPush.current) pushNow.current(); };
+    const onVisChange = () => { if (document.hidden) flush(); };
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onVisChange);
+    return () => { window.removeEventListener('beforeunload', flush); document.removeEventListener('visibilitychange', onVisChange); };
+  }, []);
+
+  // Real-time subscriptions for cross-device sync
+  useSupabaseRealtime(
+    (updater) => { realtimeUpdateRef.current = true; setStocks(updater); },
+    (updater) => { realtimeUpdateRef.current = true; setCrosses(updater); },
+    setPinVersion,
+    (updater) => { realtimeUpdateRef.current = true; setVirginBank(updater); },
+    (updater) => { realtimeUpdateRef.current = true; setExpBank(updater); },
+    (updater) => { realtimeUpdateRef.current = true; setTransfers(updater); }
+  );
+
+  const [newCrossOpen, setNewCrossOpen] = useState(false);
+  const [virginCrossStock, setVirginCrossStock] = useState(null);
+  const toast = useToast();
+
+  // Deep link: ?stock=<id> or ?s=<id> opens that stock (supports short ID prefixes from QR codes)
+  const [deepLinkStock, setDeepLinkStock] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const stockId = params.get('stock') || params.get('s');
+    if (stockId) {
+      history.replaceState(null, '', window.location.pathname);
+      return stockId;
+    }
+    return null;
+  });
+  const [deepLinkCross, setDeepLinkCross] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const crossId = params.get('cross') || params.get('c');
+    if (crossId) {
+      history.replaceState(null, '', window.location.pathname);
+      return crossId;
+    }
+    return null;
+  });
+  const [crossAccessDenied, setCrossAccessDenied] = useState(null);
+  useEffect(() => {
+    if (deepLinkStock && stocks.length > 0) {
+      setTab('stocks');
+    }
+  }, [deepLinkStock]);
+  useEffect(() => {
+    if (deepLinkCross && crosses.length > 0) {
+      const c = crosses.find(x => x.id === deepLinkCross || x.id.startsWith(deepLinkCross));
+      if (c && c.owner && c.owner !== currentUser) {
+        setCrossAccessDenied(cl(c, stocks));
+      } else if (c) {
+        setTab('home');
+      }
+      setDeepLinkCross(null);
+    }
+  }, [deepLinkCross, crosses]);
+
+  // Virgin collection notifications - VCS schedule-based
+  const [vcsNotify, setVcsNotify] = useLS('flo-vcs-notify', true);
+  const [vcsRemindMin, setVcsRemindMin] = useLS('flo-vcs-remind-min', 15);
+  const [vcsOverdueMin, setVcsOverdueMin] = useLS('flo-vcs-overdue-min', 30);
+
+  useEffect(() => {
+    if (!vcsNotify || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const fired = new Set();
+
+    function checkAll() {
+      const now = new Date();
+
+      // ── VCS stocks ──
+      const vcsStocks = stocks.filter(s => s.vcs?.enabled && s.maintainer === currentUser && !stockTags(s).includes('Dead'));
+      vcsStocks.forEach(s => {
+        const actions = computeNextActions(s.vcs, now);
+        const next = actions[0];
+        if (!next) return;
+        const prefix = `vcs-${s.id}-${next.key}-${today()}`;
+        if (next.timeUntilMs > 0 && next.timeUntilMs <= vcsRemindMin * 60000) {
+          const k = prefix + '-remind';
+          if (!fired.has(k)) { fired.add(k); new Notification(`${s.name}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
+        }
+        if (next.timeUntilMs <= 0 && next.timeUntilMs > -60000) {
+          const k = prefix + '-now';
+          if (!fired.has(k)) { fired.add(k); new Notification(`${s.name}`, { body: `${next.label} NOW`, tag: k }); }
+        }
+        if (next.timeUntilMs < -(vcsOverdueMin * 60000)) {
+          const k = prefix + '-overdue';
+          if (!fired.has(k)) { fired.add(k); new Notification(`⚠️ ${s.name}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
+        }
+        if (next.deadlineMs) {
+          const untilDeadline = next.deadlineMs - now.getTime();
+          if (untilDeadline > 0 && untilDeadline <= 30 * 60000) {
+            const k = `vcs-${s.id}-deadline-${today()}`;
+            if (!fired.has(k)) { fired.add(k); new Notification(`⚠️ ${s.name}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
+          }
+        }
+      });
+
+      // ── Collecting-virgins crosses with VCS ──
+      const vcsCrosses = crosses.filter(c => c.vcs?.enabled && c.status === 'collecting virgins' && (!c.owner || c.owner === currentUser));
+      vcsCrosses.forEach(c => {
+        const actions = computeNextActions(c.vcs, now);
+        const next = actions[0];
+        if (!next) return;
+        const cName = cl(c, stocks);
+        const prefix = `cvcs-${c.id}-${next.key}-${today()}`;
+        if (next.timeUntilMs > 0 && next.timeUntilMs <= vcsRemindMin * 60000) {
+          const k = prefix + '-remind';
+          if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
+        }
+        if (next.timeUntilMs <= 0 && next.timeUntilMs > -60000) {
+          const k = prefix + '-now';
+          if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `${next.label} NOW`, tag: k }); }
+        }
+        if (next.timeUntilMs < -(vcsOverdueMin * 60000)) {
+          const k = prefix + '-overdue';
+          if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
+        }
+        if (next.deadlineMs) {
+          const untilDeadline = next.deadlineMs - now.getTime();
+          if (untilDeadline > 0 && untilDeadline <= 30 * 60000) {
+            const k = `cvcs-${c.id}-deadline-${today()}`;
+            if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
+          }
+        }
+      });
+
+    }
+
+    const iv = setInterval(checkAll, 60000);
+    checkAll();
+    return () => clearInterval(iv);
+  }, [vcsNotify, stocks, crosses, currentUser, vcsRemindMin, vcsOverdueMin]);
+
+  const myTransfers = transfers.filter(t => t.to === currentUser && t.status === 'pending');
+  const sentResolved = transfers.filter(t => t.from === currentUser && (t.status === 'accepted' || t.status === 'declined') && !t.seen);
+
+  function handleUserSwitch(newUser) {
+    if (newUser === currentUser) return;
+    setPendingUser(newUser);
+  }
+
+  function createTransfer(t) {
+    const transfer = { id: uid(), from: currentUser, status: 'pending', createdAt: today(), ...t };
+    setTransfers(p => [...p, transfer]);
+    // Push immediately for instant cross-device visibility
+    supabasePushTransfers([transfer]).catch(e => console.error('Transfer immediate push error:', e));
+    toast.add(`Transfer request sent to ${t.to}`);
+  }
+
+  if (locked) return <PinLock user={currentUser} onSelectUser={setCurrentUser} onUnlock={() => setLocked(false)} onPinSet={() => setPinVersion(v => v + 1)} />;
+  if (pendingUser) return <PinLock user={pendingUser} onSelectUser={u => setPendingUser(u)} onUnlock={() => { setCurrentUser(pendingUser); setPendingUser(null); }} onPinSet={() => setPinVersion(v => v + 1)} />;
+
+  return (
+    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
+      <BackgroundCanvas type={bgEffect} />
+      <AmbientFly />
+
+      {/* Header */}
+      <header className="px-4 py-3 sticky top-0 z-20" style={{ background: 'rgba(9,9,11,0.8)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)', borderBottom: '1px solid var(--border)' }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="flex items-center justify-between">
+          <h1 className="text-lg font-extrabold tracking-tight cursor-pointer" onClick={() => setTab('home')} style={{ color: 'var(--text-1)' }}>Flomington</h1>
+          <div className="flex items-center gap-2">
+            <select value={currentUser} onChange={e => handleUserSwitch(e.target.value)}
+              className="px-4 py-1.5 text-sm font-semibold rounded-xl" style={{ background: 'var(--surface-2)', color: 'var(--text-1)', border: '1px solid var(--border)', outline: 'none', textAlign: 'center' }}>
+              {USERS.map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+            <span className="text-xs hidden md:inline" style={{ color: 'var(--text-3)', cursor: 'default', userSelect: 'none' }} onDoubleClick={() => window.__spawnFly && window.__spawnFly()}>{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+            {!isOnline && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold"
+                style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>Offline</span>
+            )}
+            {syncStatus && (
+              <div className="flex items-center gap-1" title={syncStatus}>
+                <div className="w-1.5 h-1.5 rounded-full" style={{
+                  background: syncStatus.startsWith('Synced') ? '#22c55e' :
+                              syncStatus.includes('failed') || syncStatus.includes('error') ? '#ef4444' :
+                              syncStatus.includes('Sync') ? '#eab308' : 'var(--text-3)',
+                  animation: syncStatus.includes('Sync') && !syncStatus.startsWith('Synced') ? 'pulse 1s infinite' : 'none'
+                }} />
+              </div>
+            )}
+            <button onClick={() => setTab('settings')} className="touch"
+              style={{ background: 'none', border: 'none', padding: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={tab === 'settings' ? 'var(--accent-2)' : 'var(--text-3)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </button>
+          </div>
+          </div>
+          <div className="md:hidden text-center mt-1">
+            <span className="text-xs" style={{ color: 'var(--text-3)' }}>{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+          </div>
+        </div>
+      </header>
+
+      {isDemoMode && (
+        <div className="sticky top-[49px] z-[19] px-4 py-2 text-center text-xs font-semibold"
+          style={{ background: 'rgba(217,119,6,0.15)', color: '#fbbf24', borderBottom: '1px solid rgba(217,119,6,0.25)', backdropFilter: 'blur(8px)' }}>
+          Demo mode - changes not synced. Reload to exit.
+        </div>
+      )}
+
+      {/* Main content */}
+      <main className="flex-1 overflow-y-auto pb-28" style={{ position: 'relative', zIndex: 1 }}>
+        <div className="max-w-6xl mx-auto px-6 py-6">
+          {tab === 'home' && <ErrorBoundary><HomeScreen stocks={stocks} setStocks={setStocks} crosses={crosses} setCrosses={setCrosses} toast={toast} onNewCross={() => setNewCrossOpen(true)} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} currentUser={currentUser} onTransfer={createTransfer} transfers={myTransfers} onAcceptTransfer={(t) => {
+            if (t.type === 'stock') { markEdited(t.itemId); setStocks(p => p.map(s => s.id === t.itemId ? { ...s, maintainer: currentUser } : s)); }
+            else if (t.type === 'cross') { markEdited(t.itemId); setCrosses(p => p.map(c => c.id === t.itemId ? { ...c, owner: currentUser } : c)); }
+            else if (t.type === 'collection') { stocks.filter(s => (s.category || 'No Collection') === t.collection && s.maintainer === t.from).forEach(s => markEdited(s.id)); setStocks(p => p.map(s => (s.category || 'No Collection') === t.collection && s.maintainer === t.from ? { ...s, maintainer: currentUser } : s)); }
+            setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: 'accepted' } : x));
+            toast.add(`Accepted transfer from ${t.from}`);
+          }} onDeclineTransfer={(t) => {
+            setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: 'declined' } : x));
+            toast.add('Transfer declined');
+          }} STOCK_CATS={STOCK_CATS} sentTransfers={sentResolved} onDismissTransfer={(t) => {
+            setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
+          }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
+          {tab === 'stocks' && <ErrorBoundary><StocksScreen stocks={stocks} setStocks={setStocks} crosses={crosses} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
+          {tab === 'virgins' && <ErrorBoundary><VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} /></ErrorBoundary>}
+          {tab === 'exp' && <ErrorBoundary><ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} /></ErrorBoundary>}
+          {tab === 'settings' && <ErrorBoundary><SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} setIsDemoMode={setIsDemoMode} /></ErrorBoundary>}
+        </div>
+      </main>
+
+      {/* Floating pill navigation */}
+      <nav className="bottom-nav" style={bulkBarActive ? { display: 'none' } : {}}>
+        <div onClick={() => setTab('home')} className={`nav-item ${tab === 'home' ? 'active' : ''}`}>
+          {IconHome(tab === 'home')}
+          <span style={{ color: tab === 'home' ? 'var(--accent-2)' : 'var(--text-3)' }}>Home</span>
+        </div>
+        <div onClick={() => setTab('stocks')} className={`nav-item ${tab === 'stocks' ? 'active' : ''}`}>
+          {IconStocks(tab === 'stocks')}
+          <span style={{ color: tab === 'stocks' ? 'var(--accent-2)' : 'var(--text-3)' }}>Stocks</span>
+        </div>
+        <div onClick={() => setNewCrossOpen(true)} className="nav-item">
+          <div className="flex items-center justify-center w-7 h-7 rounded-full" style={{
+            background: 'linear-gradient(135deg, #7c3aed, #6d28d9)',
+            boxShadow: '0 2px 8px var(--accent-glow)',
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </div>
+          <span style={{ color: 'var(--accent-2)' }}>Cross</span>
+        </div>
+        <div onClick={() => setTab('virgins')} className={`nav-item ${tab === 'virgins' ? 'active' : ''}`}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={tab === 'virgins' ? '#f9a8d4' : '#52525b'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="8" r="5" /><path d="M12 13v8" /><path d="M9 18h6" />
+          </svg>
+          <span style={{ color: tab === 'virgins' ? '#f9a8d4' : 'var(--text-3)' }}>Virgins</span>
+        </div>
+        <div onClick={() => setTab('exp')} className={`nav-item ${tab === 'exp' ? 'active' : ''}`}>
+          {(() => { const c = tab === 'exp' ? '#5eead4' : '#52525b'; return (
+          <svg width="20" height="20" viewBox="0 0 725 981" style={{ fillRule: 'evenodd', clipRule: 'evenodd', strokeLinecap: 'round', strokeLinejoin: 'bevel', strokeMiterlimit: 1.5 }}>
+            <g transform="matrix(1,0,0,1,-108.976,-84.2265)">
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(1.52343,0,0,1.52343,-10.3138,640.91)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '19.69px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.706804,0,0,1.52343,389.253,244.71)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '25.26px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.290761,0.581116,-1.36241,0.68168,547.267,3.62081)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '25.62px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.290761,0.581116,-1.36241,0.68168,664.557,-55.1136)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '25.62px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.267864,-0.134136,0.682131,1.36218,112.43,-128.407)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.33px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.267864,-0.134136,0.682131,1.36218,239.746,126.047)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.33px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.267864,-0.134136,0.682131,1.36218,239.746,126.047)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.33px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.267864,-0.134136,0.682131,1.36218,176.088,-1.17972)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.33px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.164533,-0.0823921,0.682131,1.36218,300.246,184.101)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.65px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.0807321,0.161218,-1.36218,0.682131,701.599,253.852)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.66px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.0807321,0.161218,-1.36218,0.682131,773.644,218.555)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.66px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(-0.153549,0.0768918,-0.682131,-1.36218,454.645,302.996)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.67px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(-0.104265,-0.208213,1.36218,-0.682131,67.8481,254.513)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.53px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(-0.101577,-0.202845,1.36218,-0.682131,-4.24449,285.734)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '27.55px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(1.12292,0,0,1.52343,84.5614,509.057)"><path d="M17.952,212.883L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '22.42px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.731767,0.0143386,-0.0194527,0.992763,93.6242,615.503)"><path d="M452.648,93.455L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '34.39px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.731767,0.0143386,-0.0194527,0.992763,-37.8861,615.503)"><path d="M452.648,93.455L455.823,212.883" style={{ fill: 'none', stroke: c, strokeWidth: '34.39px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(1.06782,0.518921,-0.745566,1.53421,50.1193,-482.422)"><path d="M804.932,417.178C804.932,498.016 709.84,563.549 592.538,563.549C475.315,563.549 380.144,497.962 380.144,417.178C380.144,380.931 399.659,345.973 434.912,319.073" style={{ fill: 'none', stroke: c, strokeWidth: '20.41px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(1.52343,0,0,1.52343,-10.3138,640.91)"><path d="M17.952,212.883L75.51,126.333" style={{ fill: 'none', stroke: c, strokeWidth: '19.69px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(-1.52343,0,0,1.52343,711.45,640.91)"><path d="M17.952,212.883L75.51,126.333" style={{ fill: 'none', stroke: c, strokeWidth: '19.69px' }}/></g>
+              </g>
+              <g transform="matrix(1,0,0,1,106.942,84.836)">
+                <g transform="matrix(0.701221,0.5786,-0.661708,0.801941,394.827,-239.608)"><path d="M649.229,547.647C649.229,629.921 572.575,696.617 478.018,696.617C383.525,696.617 306.808,629.865 306.808,547.647C306.808,520.752 323.842,472.437 339.69,449.346" style={{ fill: 'none', stroke: c, strokeWidth: '30.72px' }}/></g>
+              </g>
+            </g>
+          </svg>); })()}
+          <span style={{ color: tab === 'exp' ? '#5eead4' : 'var(--text-3)' }}>Exp</span>
+        </div>
+      </nav>
+
+      <NewCrossWizard open={newCrossOpen} onClose={() => { setNewCrossOpen(false); setVirginCrossStock(null); }} stocks={stocks} setCrosses={setCrosses} toast={toast} virginBank={virginBank} setVirginBank={setVirginBank} preselectedVirgin={virginCrossStock} virginsPerCross={virginsPerCross} currentUser={currentUser} />
+      <PrintLabelsModal open={printOpen} onClose={() => setPrintOpen(false)} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} printListExps={printListExps} setPrintListExps={setPrintListExps} stocks={stocks} crosses={crosses} expBank={expBank} toast={toast} />
+      <Modal open={!!crossAccessDenied} onClose={() => setCrossAccessDenied(null)} title="Access Denied">
+        <p className="text-sm mb-4" style={{ color: 'var(--text-2)' }}>The cross "{crossAccessDenied}" belongs to another user. Switch to the correct account to view it.</p>
+        <Btn v="s" onClick={() => setCrossAccessDenied(null)} className="w-full">Close</Btn>
+      </Modal>
+      <Toasts items={toast.items} remove={toast.rm} />
+    </div>
+  );
+}
+
+export default App;

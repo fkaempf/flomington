@@ -4306,8 +4306,7 @@ function VcsSetup({ f, setF, toast }) {
   const [vcsSched, setVcsSched] = React.useState(null);
   const [confirmDisable, setConfirmDisable] = React.useState(false);
 
-  React.useEffect(() => { if (vcsStep === 3 && !vcsSched) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsStep]);
-  React.useEffect(() => { if (vcsStep === 3) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsO18, vcsCpd]);
+  React.useEffect(() => { if (vcsStep === 3) { setVcsSched({ ...VCS_DEFAULTS[vcsKey(vcsO18, vcsCpd)] }); } }, [vcsStep, vcsO18, vcsCpd]);
 
   if (confirmDisable) return (
     <div className="mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
@@ -6215,14 +6214,15 @@ function App() {
     };
     pushNow.current = doPush;
     syncTimer.current = setTimeout(doPush, 3000);
-  }, [stocks, crosses, sbConfigured, pinVersion, virginBank, expBank, transfers]);
+  }, [stocks, crosses, sbConfigured, pinVersion, virginBank, expBank, transfers, currentUser]);
 
   // Flush pending push on page close/hide
   useEffect(() => {
     const flush = () => { if (pendingPush.current) pushNow.current(); };
+    const onVisChange = () => { if (document.hidden) flush(); };
     window.addEventListener('beforeunload', flush);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
-    return () => window.removeEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onVisChange);
+    return () => { window.removeEventListener('beforeunload', flush); document.removeEventListener('visibilitychange', onVisChange); };
   }, []);
 
   // Real-time subscriptions for cross-device sync

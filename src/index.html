@@ -567,6 +567,43 @@ async function supabasePullVirginBank(userName) {
   return bank;
 }
 
+async function supabasePushExpBank(userName, expBank) {
+  const sb = getSb();
+  if (!sb) return;
+  const rows = Object.entries(expBank)
+    .filter(([, v]) => (v.m || 0) + (v.f || 0) > 0)
+    .map(([sourceId, v]) => ({
+      user_name: userName, source_id: sourceId,
+      source_type: v.source || 'cross',
+      male_count: v.m || 0, female_count: v.f || 0,
+      updated_at: new Date().toISOString(),
+    }));
+  if (rows.length > 0) {
+    const { error } = await sb.from('exp_banks').upsert(rows, { onConflict: 'user_name,source_id' });
+    if (error) console.error('Exp bank push failed:', error);
+  }
+  const { data: remote } = await sb.from('exp_banks').select('source_id').eq('user_name', userName);
+  if (remote) {
+    const localIds = new Set(Object.keys(expBank).filter(k => (expBank[k].m || 0) + (expBank[k].f || 0) > 0));
+    const toDelete = remote.filter(r => !localIds.has(r.source_id)).map(r => r.source_id);
+    if (toDelete.length > 0) {
+      await sb.from('exp_banks').delete().eq('user_name', userName).in('source_id', toDelete);
+    }
+  }
+}
+
+async function supabasePullExpBank(userName) {
+  const sb = getSb();
+  if (!sb) return {};
+  const { data, error } = await sb.from('exp_banks').select('*').eq('user_name', userName);
+  if (error || !data) return {};
+  const bank = {};
+  data.forEach(row => {
+    bank[row.source_id] = { m: row.male_count || 0, f: row.female_count || 0, source: row.source_type || 'cross' };
+  });
+  return bank;
+}
+
 function mergeStocks(local, remote) {
   const merged = [...local];
   const localIds = new Set(local.map(s => s.id));
@@ -602,7 +639,7 @@ function supabaseDeleteNow(table, id) {
   sb.from(table).delete().eq('id', id).then(() => {});
 }
 
-function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank) {
+function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank, setExpBank) {
   const subRef = React.useRef(null);
   React.useEffect(() => {
     const sb = getSb();
@@ -656,6 +693,19 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank
           });
         } else if (payload.eventType === 'DELETE' && payload.old?.stock_id) {
           if (setVirginBank) setVirginBank(prev => { const next = { ...prev }; delete next[payload.old.stock_id]; return next; });
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exp_banks' }, payload => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const row = payload.new;
+          if (setExpBank) setExpBank(prev => {
+            if ((row.male_count || 0) + (row.female_count || 0) > 0) {
+              return { ...prev, [row.source_id]: { m: row.male_count || 0, f: row.female_count || 0, source: row.source_type || 'cross' } };
+            }
+            const next = { ...prev }; delete next[row.source_id]; return next;
+          });
+        } else if (payload.eventType === 'DELETE' && payload.old?.source_id) {
+          if (setExpBank) setExpBank(prev => { const next = { ...prev }; delete next[payload.old.source_id]; return next; });
         }
       })
       .subscribe();
@@ -1853,7 +1903,7 @@ function Modal({ open, onClose, title, children, wide }) {
   );
 }
 
-function Confirm({ open, onOk, onNo, title, msg }) {
+function Confirm({ open, onOk, onNo, title, msg, okLabel = 'Delete' }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={onNo}>
@@ -1863,7 +1913,7 @@ function Confirm({ open, onOk, onNo, title, msg }) {
         <p className="text-xs mb-5" style={{ color: 'var(--text-3)' }}>{msg}</p>
         <div className="flex gap-2">
           <button onClick={onOk} className="touch flex-1 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-95"
-            style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>Delete</button>
+            style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>{okLabel}</button>
           <button onClick={onNo} className="touch flex-1 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all active:scale-95"
             style={{ background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>Cancel</button>
         </div>
@@ -4932,6 +4982,10 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
   const [showRef, setShowRef] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [adminPinInput, setAdminPinInput] = useState('');
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [confirmLoadDemo, setConfirmLoadDemo] = useState(false);
+  const [confirmResetPin, setConfirmResetPin] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null);
   function adminPinGate(onSuccess) {
     const floHash = localStorage.getItem('flo-pin-Flo');
     if (!floHash) { toast.add('Flo has no PIN set'); return; }
@@ -5949,6 +6003,22 @@ function App() {
           return merged;
         });
       });
+      // Pull exp bank and merge with local
+      supabasePullExpBank(currentUser).then(remoteEB => {
+        setExpBank(prev => {
+          const merged = { ...remoteEB };
+          Object.entries(prev).forEach(([k, v]) => {
+            if ((v.m || 0) + (v.f || 0) > 0) {
+              merged[k] = {
+                m: Math.max((merged[k]?.m || 0), v.m || 0),
+                f: Math.max((merged[k]?.f || 0), v.f || 0),
+                source: v.source || merged[k]?.source || 'cross',
+              };
+            }
+          });
+          return merged;
+        });
+      });
       setSyncStatus('Synced ' + new Date().toLocaleTimeString());
       setTimeout(() => {
         initialPushBlocked.current = false;
@@ -6006,10 +6076,11 @@ function App() {
         setTimeout(doPush, 5000);
       });
       supabasePushVirginBank(currentUser, virginBank).catch(e => console.error('Virgin bank push error:', e));
+      supabasePushExpBank(currentUser, expBank).catch(e => console.error('Exp bank push error:', e));
     };
     pushNow.current = doPush;
     syncTimer.current = setTimeout(doPush, 3000);
-  }, [stocks, crosses, sbConfigured, pinVersion, virginBank]);
+  }, [stocks, crosses, sbConfigured, pinVersion, virginBank, expBank]);
 
   // Flush pending push on page close/hide
   useEffect(() => {
@@ -6024,7 +6095,8 @@ function App() {
     (updater) => { realtimeUpdateRef.current = true; setStocks(updater); },
     (updater) => { realtimeUpdateRef.current = true; setCrosses(updater); },
     setPinVersion,
-    (updater) => { realtimeUpdateRef.current = true; setVirginBank(updater); }
+    (updater) => { realtimeUpdateRef.current = true; setVirginBank(updater); },
+    (updater) => { realtimeUpdateRef.current = true; setExpBank(updater); }
   );
 
   const [newCrossOpen, setNewCrossOpen] = useState(false);

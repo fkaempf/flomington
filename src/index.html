@@ -6298,7 +6298,7 @@ function App() {
         return result;
       });
       done();
-    });
+    }).catch(() => done());
     supabasePullExpBank(currentUser).then(remoteEB => {
       const remoteIds = new Set(Object.keys(remoteEB));
       realtimeUpdateRef.current = true;
@@ -6314,7 +6314,7 @@ function App() {
         return result;
       });
       done();
-    });
+    }).catch(() => done());
     supabasePullTransfers().then(remoteTransfers => {
       realtimeUpdateRef.current = true;
       setTransfers(prev => {
@@ -6334,7 +6334,7 @@ function App() {
         });
       });
       done();
-    });
+    }).catch(() => done());
   }, [sbConfigured, currentUser]);
 
   // Re-pull on tab focus (handles mobile sleep, lost websocket)

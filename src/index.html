@@ -396,6 +396,7 @@ input:focus, textarea:focus, select:focus {
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
+console.log('[SYNC] Code version: 2026-03-16-v2');
 
 /* ========== HELPERS ========== */
 const uid = () => crypto.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -577,6 +578,9 @@ async function supabasePushExpBank(userName, expBank, lastPulledIds) {
   // Pull remote to avoid re-creating deleted entries
   const { data: remote } = await sb.from('exp_banks').select('source_id,male_count,female_count').eq('user_name', userName);
   const remoteMap = new Map((remote || []).map(r => [r.source_id, { m: r.male_count || 0, f: r.female_count || 0 }]));
+  const localIds = Object.keys(expBank).filter(k => (expBank[k].m || 0) + (expBank[k].f || 0) > 0);
+  const skipped = localIds.filter(id => !remoteMap.has(id) && lastPulledIds.current.has(id));
+  if (skipped.length > 0) console.log('[SYNC] Push skipping remotely-deleted:', skipped);
   const rows = Object.entries(expBank)
     .filter(([sourceId, v]) => {
       const lm = v.m || 0, lf = v.f || 0;
@@ -592,6 +596,7 @@ async function supabasePushExpBank(userName, expBank, lastPulledIds) {
       updated_at: new Date().toISOString(),
     }));
   if (rows.length > 0) {
+    console.log('[SYNC] Push exp bank:', rows.map(r => r.source_id));
     const { error } = await sb.from('exp_banks').upsert(rows, { onConflict: 'user_name,source_id' });
     if (error) console.error('Exp bank push failed:', error);
   }
@@ -737,6 +742,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exp_banks' }, payload => {
+        console.log('[SYNC] Realtime exp_banks:', payload.eventType, payload.eventType === 'DELETE' ? payload.old : payload.new?.source_id);
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const row = payload.new;
           if (isDeletedAux('eb:' + row.source_id)) return; // local delete wins
@@ -4884,10 +4890,14 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps,
   }
 
   function clearEntry(sourceId) {
+    console.log('[SYNC] clearEntry:', sourceId);
     markDeletedAux('eb:' + sourceId);
     setExpBank(prev => { const next = { ...prev }; delete next[sourceId]; return next; });
     const sb = getSb();
-    if (sb) sb.from('exp_banks').delete().eq('user_name', currentUser).eq('source_id', sourceId).then(() => {});
+    if (sb) sb.from('exp_banks').delete().eq('user_name', currentUser).eq('source_id', sourceId).then(
+      () => console.log('[SYNC] Supabase DELETE confirmed:', sourceId),
+      (e) => console.error('[SYNC] Supabase DELETE failed:', sourceId, e)
+    );
     toast.add('Cleared');
   }
 

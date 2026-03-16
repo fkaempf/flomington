@@ -6099,6 +6099,15 @@ function App() {
   const [sbKey, setSbKey] = useLS('flo-sb-key', '');
   const sbConfigured = !!(sbUrl || SUPABASE_URL) && !!(sbKey || SUPABASE_KEY);
   const [syncStatus, setSyncStatus] = useState('');
+  const syncErrorLog = useRef([]);
+  const logSyncError = useCallback((source, err) => {
+    const msg = typeof err === 'object' ? (err?.message || err?.details || JSON.stringify(err)) : String(err);
+    const entry = new Date().toLocaleTimeString() + ' [' + source + '] ' + msg;
+    console.error('[SYNC ERROR]', source, err);
+    syncErrorLog.current.push(entry);
+    if (syncErrorLog.current.length > 50) syncErrorLog.current.shift();
+    setSyncStatus('Sync error: ' + source);
+  }, []);
   const syncTimer = useRef(null);
   const realtimeUpdateRef = useRef(false);
 
@@ -6215,8 +6224,8 @@ function App() {
           }));
         })();
       }
-    }).catch(() => {
-      setSyncStatus('Pull failed');
+    }).catch(e => {
+      logSyncError('initial pull', e);
       initialPushBlocked.current = false;
     });
   }, [sbConfigured]);
@@ -6239,13 +6248,13 @@ function App() {
         supabaseSyncDeletes('stocks', new Set(stocks.map(s => s.id)));
         supabaseSyncDeletes('crosses', new Set(crosses.map(c => c.id)));
         setSyncStatus('Synced ' + new Date().toLocaleTimeString());
-      }).catch(() => {
-        setSyncStatus('Push failed – retrying...');
+      }).catch(e => {
+        logSyncError('stocks/crosses', e);
         setTimeout(doPush, 5000);
       });
-      supabasePushVirginBank(currentUser, virginBank, lastPulledVBIds).catch(e => { console.error('Virgin bank push error:', e); setSyncStatus('Sync error: virgin bank'); });
-      supabasePushExpBank(currentUser, expBank, lastPulledEBIds).catch(e => { console.error('Exp bank push error:', e); setSyncStatus('Sync error: exp bank'); });
-      supabasePushTransfers(transfers).catch(e => { console.error('Transfers push error:', e); setSyncStatus('Sync error: transfers'); });
+      supabasePushVirginBank(currentUser, virginBank, lastPulledVBIds).catch(e => logSyncError('virgin bank', e));
+      supabasePushExpBank(currentUser, expBank, lastPulledEBIds).catch(e => logSyncError('exp bank', e));
+      supabasePushTransfers(transfers).catch(e => logSyncError('transfers', e));
     };
     pushNow.current = doPush;
     syncTimer.current = setTimeout(doPush, 3000);
@@ -6481,7 +6490,7 @@ function App() {
     const transfer = { id: uid(), from: currentUser, status: 'pending', createdAt: today(), ...t };
     setTransfers(p => [...p, transfer]);
     // Push immediately for instant cross-device visibility
-    supabasePushTransfers([transfer]).catch(e => console.error('Transfer immediate push error:', e));
+    supabasePushTransfers([transfer]).catch(e => logSyncError('transfer send', e));
     toast.add(`Transfer request sent to ${t.to}`);
   }
 
@@ -6509,7 +6518,13 @@ function App() {
                   style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>Offline</span>
               )}
               {syncStatus && (
-                <div className="flex items-center gap-1" title={syncStatus}>
+                <div className="flex items-center gap-1" title={syncStatus}
+                  style={{ cursor: (syncStatus.includes('error') || syncStatus.includes('failed')) ? 'pointer' : 'default' }}
+                  onClick={() => {
+                    if (syncErrorLog.current.length > 0) {
+                      navigator.clipboard.writeText(syncErrorLog.current.join('\n')).then(() => toast.add('Error log copied'));
+                    }
+                  }}>
                   <div className="w-1.5 h-1.5 rounded-full" style={{
                     background: syncStatus.startsWith('Synced') ? '#22c55e' :
                                 syncStatus.includes('failed') || syncStatus.includes('error') ? '#ef4444' :

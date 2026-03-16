@@ -560,7 +560,6 @@ async function supabasePushVirginBank(userName, virginBank, lastPulledIds) {
     })
     .map(([stockId, count]) => ({
       user_name: userName, stock_id: stockId, count,
-      updated_at: new Date().toISOString(),
     }));
   if (rows.length > 0) {
     console.log('[SYNC] VB pushing:', rows.map(r => r.stock_id + ':' + r.count));

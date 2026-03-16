@@ -438,7 +438,10 @@ const CROSS_FIELD_MAP = {
 function toSnake(obj, fieldMap) {
   const out = {};
   for (const [camel, snake] of Object.entries(fieldMap)) {
-    if (obj[camel] !== undefined) out[snake] = obj[camel];
+    if (obj[camel] !== undefined) {
+      // Convert empty strings to null for timestamp/date columns
+      out[snake] = obj[camel] === '' ? null : obj[camel];
+    }
   }
   return out;
 }
@@ -866,7 +869,7 @@ const VCS_DEFAULTS = {
   '25_3': { eveningClear: '18:00', morningCollect: '09:00', middayCollect: '12:00', afternoonCollect: '16:30' },
 };
 function vcsKey(o18, n) { return (o18 ? '18' : '25') + '_' + n; }
-function getVirginWindowH() { return 8; }
+function getVirginWindowH(at18) { return at18 ? 16 : 8; }
 function makeVcs(o18, cpd, sched) {
   const now = new Date().toISOString();
   return { enabled: true, overnightAt18: !!o18, collectionsPerDay: cpd, schedule: { ...sched },
@@ -995,8 +998,9 @@ function vcsWindowProgress(vcs, now) {
     const nextMs = actions[0].suggestedMs;
     if (nextMs > clearMs) return Math.max(0, Math.min(1, (nowMs - clearMs) / (nextMs - clearMs)));
   }
-  // Fallback: track toward 8h expiry if no actions left
-  const windowMs = getVirginWindowH() * 3600000;
+  // Fallback: track toward expiry if no actions left
+  const at18 = vcs.lastClearTemp ? vcs.lastClearTemp === '18' : vcs.overnightAt18;
+  const windowMs = getVirginWindowH(at18) * 3600000;
   return Math.max(0, Math.min(1, (nowMs - clearMs) / windowMs));
 }
 

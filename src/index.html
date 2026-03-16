@@ -508,16 +508,25 @@ async function supabasePull() {
   return { stocks, crosses, pins };
 }
 
+// Sanitize row: convert empty strings to null (Supabase rejects "" for timestamp columns)
+function sanitizeRow(row) {
+  for (const k of Object.keys(row)) {
+    if (row[k] === '') row[k] = null;
+    if (k === 'vcs' && row[k] && typeof row[k] === 'object') row[k] = JSON.stringify(row[k]);
+  }
+  return row;
+}
+
 async function supabasePush(stocks, crosses, pins) {
   const sb = getSb();
   if (!sb) throw new Error('Supabase not configured');
   if (stocks && stocks.length > 0) {
-    const rows = stocks.map(s => toSnake(s, STOCK_FIELD_MAP));
+    const rows = stocks.map(s => sanitizeRow(toSnake(s, STOCK_FIELD_MAP)));
     const { error } = await sb.from('stocks').upsert(rows, { onConflict: 'id' });
     if (error) throw error;
   }
   if (crosses && crosses.length > 0) {
-    const rows = crosses.map(c => toSnake(c, CROSS_FIELD_MAP));
+    const rows = crosses.map(c => sanitizeRow(toSnake(c, CROSS_FIELD_MAP)));
     const { error } = await sb.from('crosses').upsert(rows, { onConflict: 'id' });
     if (error) throw error;
   }

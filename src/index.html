@@ -4764,7 +4764,7 @@ function StockModal({ stock, onClose, stocks, setStocks, toast, onDelete, STOCK_
 }
 
 /* ========== VIRGINS SCREEN ========== */
-function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross, printListVirgins, setPrintListVirgins }) {
+function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross, printListVirgins, setPrintListVirgins, currentUser }) {
   const [search, setSearch] = useState('');
   const stocksWithVirgins = useMemo(() => {
     return stocks.map(s => ({
@@ -4859,7 +4859,7 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross,
 }
 
 /* ========== EXP SCREEN ========== */
-function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps, setPrintListExps }) {
+function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps, setPrintListExps, currentUser }) {
   const [search, setSearch] = useState('');
   const [logMode, setLogMode] = useState('cross');
 
@@ -6544,8 +6544,8 @@ function App() {
             setTransfers(p => p.map(x => x.id === t.id ? { ...x, seen: true } : x));
           }} printListCrosses={printListCrosses} setPrintListCrosses={setPrintListCrosses} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} initialCrossId={deepLinkCross} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
           {tab === 'stocks' && <ErrorBoundary><StocksScreen stocks={stocks} setStocks={setStocks} crosses={crosses} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
-          {tab === 'virgins' && <ErrorBoundary><VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} /></ErrorBoundary>}
-          {tab === 'exp' && <ErrorBoundary><ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} /></ErrorBoundary>}
+          {tab === 'virgins' && <ErrorBoundary><VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} currentUser={currentUser} /></ErrorBoundary>}
+          {tab === 'exp' && <ErrorBoundary><ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} currentUser={currentUser} /></ErrorBoundary>}
           {tab === 'settings' && <ErrorBoundary><SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} setIsDemoMode={setIsDemoMode} /></ErrorBoundary>}
         </div>
       </main>

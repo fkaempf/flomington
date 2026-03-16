@@ -6122,31 +6122,16 @@ function App() {
       let vcsBackfilled = false;
       if (remote.stocks) setStocks(prev => {
         const localMap = new Map(prev.map(s => [s.id, s]));
-        const remoteIds = new Set(remote.stocks.map(s => s.id));
-        // Start with local items that exist in both (local wins)
-        const merged = prev.filter(s => remoteIds.has(s.id));
-        // Check for vcs backfill needs
-        merged.forEach(s => {
-          const rs = remote.stocks.find(r => r.id === s.id);
-          if (s.vcs && rs && !rs.vcs) vcsBackfilled = true;
-        });
-        // Add remote-only items (new from other devices)
-        remote.stocks.forEach(rs => {
-          if (!localMap.has(rs.id)) merged.push(rs);
+        // Remote wins — Supabase is source of truth
+        const merged = remote.stocks.map(rs => {
+          const local = localMap.get(rs.id);
+          // Backfill VCS from local if remote lost it
+          if (local?.vcs && !rs.vcs) { vcsBackfilled = true; return { ...rs, vcs: local.vcs }; }
+          return rs;
         });
         return merged;
       });
-      if (remote.crosses) setCrosses(prev => {
-        const localMap = new Map(prev.map(c => [c.id, c]));
-        const remoteIds = new Set(remote.crosses.map(c => c.id));
-        // Local items that exist in both (local wins)
-        const merged = prev.filter(c => remoteIds.has(c.id));
-        // Add remote-only items
-        remote.crosses.forEach(rc => {
-          if (!localMap.has(rc.id)) merged.push(rc);
-        });
-        return merged;
-      });
+      if (remote.crosses) setCrosses(remote.crosses);
       if (remote.pins && remote.pins.length > 0) {
         let pinSynced = false;
         remote.pins.forEach(p => {

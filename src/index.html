@@ -6215,12 +6215,14 @@ function App() {
   const pendingPush = useRef(false);
   const pushNow = useRef(() => {});
   useEffect(() => {
-    if (!sbConfigured || initialPushBlocked.current || demoMode.current) return;
-    if (realtimeUpdateRef.current || pullInProgress.current) { realtimeUpdateRef.current = false; if (!pendingPush.current) return; }
+    if (!sbConfigured || initialPushBlocked.current || demoMode.current) { console.log('[SYNC] Push skipped:', !sbConfigured ? 'not configured' : initialPushBlocked.current ? 'initial blocked' : 'demo'); return; }
+    if (realtimeUpdateRef.current || pullInProgress.current) { const had = realtimeUpdateRef.current; realtimeUpdateRef.current = false; if (!pendingPush.current) { console.log('[SYNC] Push skipped:', had ? 'realtime update' : 'pull in progress'); return; } }
     pendingPush.current = true;
     clearTimeout(syncTimer.current);
+    console.log('[SYNC] Push scheduled (3s)');
     const doPush = () => {
       pendingPush.current = false;
+      console.log('[SYNC] Push firing: ' + stocks.length + ' stocks, ' + crosses.length + ' crosses');
       const pins = USERS.map(u => {
         const h = localStorage.getItem(`flo-pin-${u}`);
         return h ? { user: u, hash: h } : null;
@@ -6228,6 +6230,7 @@ function App() {
       supabasePush(stocks, crosses, pins).then(() => {
         supabaseSyncDeletes('stocks', new Set(stocks.map(s => s.id)));
         supabaseSyncDeletes('crosses', new Set(crosses.map(c => c.id)));
+        console.log('[SYNC] Push succeeded');
         setSyncStatus('Synced ' + new Date().toLocaleTimeString());
       }).catch(e => {
         logSyncError('stocks/crosses', e);

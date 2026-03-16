@@ -543,19 +543,31 @@ async function supabasePushVirginBank(userName, virginBank, lastPulledIds) {
   // Pull remote to avoid re-creating deleted entries
   const { data: remote } = await sb.from('virgin_banks').select('stock_id,count').eq('user_name', userName);
   const remoteMap = new Map((remote || []).map(r => [r.stock_id, r.count]));
-  const rows = Object.entries(virginBank)
+  const localEntries = Object.entries(virginBank).filter(([, count]) => count > 0);
+  console.log('[SYNC] VB push: local=' + localEntries.map(([id, c]) => id + ':' + c).join(',') +
+    ' remote=' + (remote || []).map(r => r.stock_id + ':' + r.count).join(',') +
+    ' lastPulled=' + [...lastPulledIds.current].join(','));
+  const rows = localEntries
     .filter(([stockId, count]) => {
-      if (count <= 0) return false;
-      if (remoteMap.has(stockId)) return remoteMap.get(stockId) !== count; // update if changed
-      return !lastPulledIds.current.has(stockId); // new entry only if not previously pulled (i.e. not remotely deleted)
+      if (remoteMap.has(stockId)) {
+        const dominated = remoteMap.get(stockId) === count;
+        if (dominated) console.log('[SYNC] VB skip (same as remote):', stockId);
+        return !dominated;
+      }
+      const inLastPulled = lastPulledIds.current.has(stockId);
+      if (inLastPulled) console.log('[SYNC] VB skip (remotely deleted):', stockId);
+      return !inLastPulled;
     })
     .map(([stockId, count]) => ({
       user_name: userName, stock_id: stockId, count,
       updated_at: new Date().toISOString(),
     }));
   if (rows.length > 0) {
+    console.log('[SYNC] VB pushing:', rows.map(r => r.stock_id + ':' + r.count));
     const { error } = await sb.from('virgin_banks').upsert(rows, { onConflict: 'user_name,stock_id' });
     if (error) console.error('Virgin bank push failed:', error);
+  } else {
+    console.log('[SYNC] VB push: nothing to push');
   }
   // Update lastPulledIds with everything now in remote
   lastPulledIds.current = new Set((remote || []).map(r => r.stock_id));

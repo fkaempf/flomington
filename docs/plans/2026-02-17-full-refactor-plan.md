@@ -223,7 +223,7 @@ import '@testing-library/jest-dom';
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
-    "encrypt": "npm run build && staticrypt dist/app.html -d . --short --remember 30 --template-title 'Flomington' --template-instructions 'Enter the lab password to access the fly stock manager.' --template-color-primary '#8b5cf6' --template-color-secondary '#09090b' -p '***REDACTED***'",
+    "encrypt": "npm run build && staticrypt dist/app.html -d . --short --remember 30 --template-title 'Flomington' --template-instructions 'Enter the lab password to access the fly stock manager.' --template-color-primary '#8b5cf6' --template-color-secondary '#09090b' -p '$FLOMINGTON_PW'",
     "deploy": "npm run encrypt && git add index.html && git push"
   }
 }
@@ -1445,7 +1445,7 @@ Expected: Encrypted `index.html` at project root.
 
 **Step 3: Test encrypted site**
 
-Open `index.html` in browser, enter password "***REDACTED***", verify app loads.
+Open `index.html` in browser, enter password "$FLOMINGTON_PW", verify app loads.
 
 **Step 4: Deploy**
 

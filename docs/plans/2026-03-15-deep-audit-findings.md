@@ -125,7 +125,7 @@
 ### Critical (if app scope expands beyond trusted lab)
 - Supabase anon key hardcoded with no RLS — any client can read/write/delete all data
 - PIN validation is client-side only — editing localStorage bypasses it
-- StatiCrypt password "***REDACTED***" committed to CLAUDE.md in git history
+- StatiCrypt password "$FLOMINGTON_PW" committed to CLAUDE.md in git history
 
 ### High
 - QR code innerHTML XSS potential (SVG injection via compromised CDN)

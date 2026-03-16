@@ -664,7 +664,7 @@ git commit -m "security: enable RLS on all tables, pin CDN versions, fix XSS esc
 - [ ] **Step 3: Encrypt and final commit**
 
 ```bash
-npx staticrypt src/index.html -d . --short --remember 30 --template-title 'Flomington' --template-instructions 'Enter the lab password to access the fly stock manager.' --template-color-primary '#8b5cf6' --template-color-secondary '#09090b' -p "***REDACTED***"
+npx staticrypt src/index.html -d . --short --remember 30 --template-title 'Flomington' --template-instructions 'Enter the lab password to access the fly stock manager.' --template-color-primary '#8b5cf6' --template-color-secondary '#09090b' -p "$FLOMINGTON_PW"
 git add index.html && git add -f src/index.html && git add CLAUDE.md
 git commit -m "v1.0.0: stability improvements complete"
 ```

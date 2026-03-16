@@ -6273,7 +6273,7 @@ function App() {
             result[k] = v;
           }
         });
-        lastPulledVBIds.current = new Set([...remoteIds, ...Object.keys(result)]);
+        lastPulledVBIds.current = remoteIds; // only track what's actually in remote
         if (JSON.stringify(result) === JSON.stringify(prev)) return prev;
         return result;
       });
@@ -6289,7 +6289,7 @@ function App() {
             result[k] = v;
           }
         });
-        lastPulledEBIds.current = new Set([...remoteIds, ...Object.keys(result)]);
+        lastPulledEBIds.current = remoteIds; // only track what's actually in remote
         if (JSON.stringify(result) === JSON.stringify(prev)) return prev;
         return result;
       });

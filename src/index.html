@@ -5103,9 +5103,8 @@ function VirginNotifSettings({ toast }) {
 }
 
 /* ========== SETTINGS SCREEN ========== */
-function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser, demoMode, setIsDemoMode }) {
+function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffect, setBgEffect, virginsPerCross, setVirginsPerCross, setVirginBank, setExpBank, setTransfers, setCollections, sbUrl, setSbUrl, sbKey, setSbKey, sbConfigured, syncStatus, setSyncStatus, currentUser, demoMode, setIsDemoMode, setLocked }) {
   const fileRef = useRef(null);
-  const [showRef, setShowRef] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [adminPinInput, setAdminPinInput] = useState('');
   const [confirmClearAll, setConfirmClearAll] = useState(false);
@@ -5201,12 +5200,16 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
   }
 
   function changePin() {
-    USERS.forEach(u => localStorage.removeItem(`flo-pin-${u}`));
-    if (sbConfigured) {
-      supabasePush(stocks, crosses, []).then(() => window.location.reload()).catch(() => window.location.reload());
-    } else {
-      window.location.reload();
-    }
+    localStorage.removeItem(`flo-pin-${currentUser}`);
+    localStorage.removeItem(`flo-exp-${currentUser}`);
+    localStorage.removeItem(`flo-virgins-${currentUser}`);
+    localStorage.removeItem('flo-stocks');
+    localStorage.removeItem('flo-crosses');
+    localStorage.removeItem('flo-transfers');
+    localStorage.removeItem('flo-collections');
+    localStorage.removeItem('staticrypt-token');
+    if (setLocked) setLocked(true);
+    toast.add('PIN reset and local data cleared');
   }
 
   return (
@@ -5318,26 +5321,6 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       )}
 
       <div className="card p-5">
-        <button onClick={() => setShowRef(!showRef)} className="flex items-center justify-between w-full touch">
-          <span className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>Quick Reference</span>
-          <span style={{ color: 'var(--text-3)' }}>{showRef ? '▴' : '▾'}</span>
-        </button>
-        {showRef && (
-          <div className="text-xs space-y-3 leading-relaxed mt-4" style={{ color: 'var(--text-3)' }}>
-            <p><b style={{ color: 'var(--text-2)' }}>25°C</b> - Virgins day 9–11, progeny day 11–15.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>18°C</b> - Virgins day 17–19, progeny day 19–23.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Stocks (25°C)</b> - Flip every 2-3 weeks.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Stocks (18°C)</b> - Flip every 6 weeks.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Re-vial</b> - Move parents to new vial after 2-4d for more offspring.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Optogenetics</b> - CsChrimson/ChR2 need 4+ days on all-trans retinal food.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>GCaMP</b> - Expression improves 3-5d post-eclosion.</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Balancers</b> - FM7 (X), CyO (2nd), TM3/TM6B (3rd).</p>
-            <p><b style={{ color: 'var(--text-2)' }}>Nomenclature</b> - Semicolons separate chromosomes. Lowercase = recessive, Uppercase = dominant.</p>
-          </div>
-        )}
-      </div>
-
-      <div className="card p-5">
         <p className="text-sm font-bold mb-1" style={{ color: 'var(--text-1)' }}>Change PIN</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Reset and set a new PIN.</p>
         <Btn v="s" onClick={() => setConfirmResetPin(true)} className="w-full">Reset PIN</Btn>
@@ -5350,7 +5333,7 @@ function SettingsScreen({ stocks, crosses, setStocks, setCrosses, toast, bgEffec
       <Confirm open={confirmLoadDemo} onOk={() => { setConfirmLoadDemo(false); loadDemo(); }} onNo={() => setConfirmLoadDemo(false)}
         title="Load demo data?" msg="This will replace all current data. Sync will pause until you reload." okLabel="Load Demo" />
       <Confirm open={confirmResetPin} onOk={() => { setConfirmResetPin(false); changePin(); }} onNo={() => setConfirmResetPin(false)}
-        title="Reset all user PINs?" msg="Everyone will need to set new PINs." okLabel="Reset" />
+        title="Reset your PIN?" msg="You will be logged out, local data cleared, and need to set a new PIN. Data will be re-synced from Supabase on next login." okLabel="Reset" />
       <Confirm open={!!pendingImport} onOk={() => { applyImport(); }} onNo={() => setPendingImport(null)}
         title="Import data?" msg={`This will replace your current data with ${pendingImport ? (pendingImport.stocks?.length || 0) + ' stocks and ' + (pendingImport.crosses?.length || 0) + ' crosses' : ''} from the backup file.`} okLabel="Import" />
 
@@ -6591,7 +6574,7 @@ function App() {
           {tab === 'stocks' && <ErrorBoundary><StocksScreen stocks={stocks} setStocks={setStocks} crosses={crosses} toast={toast} currentUser={currentUser} onTransfer={createTransfer} STOCK_CATS={STOCK_CATS} setCollections={setCollections} virginBank={virginBank} setVirginBank={setVirginBank} initialStockId={deepLinkStock} printList={printList} setPrintList={setPrintList} printListCrosses={printListCrosses} printListVirgins={printListVirgins} printListExps={printListExps} onOpenPrint={() => setPrintOpen(true)} onBulkActive={setBulkBarActive} expBank={expBank} setExpBank={setExpBank} /></ErrorBoundary>}
           {tab === 'virgins' && <ErrorBoundary><VirginsScreen stocks={stocks} virginBank={virginBank} setVirginBank={setVirginBank} toast={toast} onStartCross={(stockId) => { setVirginCrossStock(stockId); setNewCrossOpen(true); }} printListVirgins={printListVirgins} setPrintListVirgins={setPrintListVirgins} currentUser={currentUser} /></ErrorBoundary>}
           {tab === 'exp' && <ErrorBoundary><ExpScreen stocks={stocks} crosses={crosses} expBank={expBank} setExpBank={setExpBank} toast={toast} printListExps={printListExps} setPrintListExps={setPrintListExps} currentUser={currentUser} /></ErrorBoundary>}
-          {tab === 'settings' && <ErrorBoundary><SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} setIsDemoMode={setIsDemoMode} /></ErrorBoundary>}
+          {tab === 'settings' && <ErrorBoundary><SettingsScreen stocks={stocks} crosses={crosses} setStocks={setStocks} setCrosses={setCrosses} toast={toast} bgEffect={bgEffect} setBgEffect={setBgEffect} virginsPerCross={virginsPerCross} setVirginsPerCross={setVirginsPerCross} setVirginBank={setVirginBank} setExpBank={setExpBank} setTransfers={setTransfers} setCollections={setCollections} sbUrl={sbUrl} setSbUrl={setSbUrl} sbKey={sbKey} setSbKey={setSbKey} sbConfigured={sbConfigured} syncStatus={syncStatus} setSyncStatus={setSyncStatus} currentUser={currentUser} demoMode={demoMode} setIsDemoMode={setIsDemoMode} setLocked={setLocked} /></ErrorBoundary>}
         </div>
       </main>
 

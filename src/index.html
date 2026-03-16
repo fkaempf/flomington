@@ -396,7 +396,7 @@ input:focus, textarea:focus, select:focus {
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
-console.log('[SYNC] Code version: 2026-03-16-v4');
+console.log('[SYNC] Code version: 2026-03-16-v5');
 
 /* ========== HELPERS ========== */
 const uid = () => crypto.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -6292,8 +6292,9 @@ function App() {
             result[k] = v;
           }
         });
-        lastPulledVBIds.current = remoteIds; // only track what's actually in remote
+        lastPulledVBIds.current = remoteIds;
         if (JSON.stringify(result) === JSON.stringify(prev)) return prev;
+        realtimeUpdateRef.current = true; // only flag when state actually changes
         return result;
       });
       done();
@@ -6307,8 +6308,9 @@ function App() {
             result[k] = v;
           }
         });
-        lastPulledEBIds.current = remoteIds; // only track what's actually in remote
+        lastPulledEBIds.current = remoteIds;
         if (JSON.stringify(result) === JSON.stringify(prev)) return prev;
+        realtimeUpdateRef.current = true;
         return result;
       });
       done();
@@ -6325,6 +6327,7 @@ function App() {
             return local && local.status !== rt.status;
           });
         if (!changed) return prev;
+        realtimeUpdateRef.current = true;
         return remoteTransfers.map(rt => {
           const local = localMap.get(rt.id);
           return local ? { ...rt, seen: local.seen } : rt;
@@ -6516,10 +6519,16 @@ function App() {
               )}
               {syncStatus && (
                 <div className="flex items-center gap-1" title={syncStatus}
-                  style={{ cursor: (syncStatus.includes('error') || syncStatus.includes('failed')) ? 'pointer' : 'default' }}
+                  style={{ cursor: 'pointer' }}
                   onClick={() => {
-                    if (syncErrorLog.current.length > 0) {
-                      navigator.clipboard.writeText(syncErrorLog.current.join('\n')).then(() => toast.add('Error log copied'));
+                    if (syncStatus.includes('error') || syncStatus.includes('failed')) {
+                      if (syncErrorLog.current.length > 0) {
+                        navigator.clipboard.writeText(syncErrorLog.current.join('\n')).then(() => toast.add('Error log copied'));
+                      }
+                    } else {
+                      lastRePull.current = 0;
+                      rePullAux();
+                      toast.add('Pulling...');
                     }
                   }}>
                   <div className="w-1.5 h-1.5 rounded-full" style={{

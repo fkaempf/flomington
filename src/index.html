@@ -564,7 +564,7 @@ async function supabasePushVirginBank(userName, virginBank, lastPulledIds) {
   if (rows.length > 0) {
     console.log('[SYNC] VB pushing:', rows.map(r => r.stock_id + ':' + r.count));
     const { error } = await sb.from('virgin_banks').upsert(rows, { onConflict: 'user_name,stock_id' });
-    if (error) console.error('Virgin bank push failed:', error);
+    if (error) { console.error('Virgin bank push failed:', error); throw error; }
   } else {
     console.log('[SYNC] VB push: nothing to push');
   }
@@ -609,7 +609,7 @@ async function supabasePushExpBank(userName, expBank, lastPulledIds) {
   if (rows.length > 0) {
     console.log('[SYNC] Push exp bank:', rows.map(r => r.source_id));
     const { error } = await sb.from('exp_banks').upsert(rows, { onConflict: 'user_name,source_id' });
-    if (error) console.error('Exp bank push failed:', error);
+    if (error) { console.error('Exp bank push failed:', error); throw error; }
   }
   // Update lastPulledIds with everything now in remote
   lastPulledIds.current = new Set((remote || []).map(r => r.source_id));
@@ -639,7 +639,7 @@ async function supabasePushTransfers(transfers) {
     seen: t.seen || false, created_at: t.createdAt || new Date().toISOString(),
   }));
   const { error } = await sb.from('transfers').upsert(rows, { onConflict: 'id' });
-  if (error) console.error('Transfers push failed:', error);
+  if (error) { console.error('Transfers push failed:', error); throw error; }
 }
 
 async function supabasePullTransfers() {
@@ -6243,9 +6243,9 @@ function App() {
         setSyncStatus('Push failed – retrying...');
         setTimeout(doPush, 5000);
       });
-      supabasePushVirginBank(currentUser, virginBank, lastPulledVBIds).catch(e => console.error('Virgin bank push error:', e));
-      supabasePushExpBank(currentUser, expBank, lastPulledEBIds).catch(e => console.error('Exp bank push error:', e));
-      supabasePushTransfers(transfers).catch(e => console.error('Transfers push error:', e));
+      supabasePushVirginBank(currentUser, virginBank, lastPulledVBIds).catch(e => { console.error('Virgin bank push error:', e); setSyncStatus('Sync error: virgin bank'); });
+      supabasePushExpBank(currentUser, expBank, lastPulledEBIds).catch(e => { console.error('Exp bank push error:', e); setSyncStatus('Sync error: exp bank'); });
+      supabasePushTransfers(transfers).catch(e => { console.error('Transfers push error:', e); setSyncStatus('Sync error: transfers'); });
     };
     pushNow.current = doPush;
     syncTimer.current = setTimeout(doPush, 3000);

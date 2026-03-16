@@ -396,7 +396,7 @@ input:focus, textarea:focus, select:focus {
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
-console.log('[SYNC] Code version: 2026-03-16-v3');
+console.log('[SYNC] Code version: 2026-03-16-v4');
 
 /* ========== HELPERS ========== */
 const uid = () => crypto.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -6283,7 +6283,6 @@ function App() {
     // Remote wins, but preserve genuinely new local entries (not yet pushed)
     supabasePullVirginBank(currentUser).then(remoteVB => {
       const remoteIds = new Set(Object.keys(remoteVB));
-      realtimeUpdateRef.current = true;
       setVirginBank(prev => {
         // Start with remote (respects remote deletions)
         const result = { ...remoteVB };
@@ -6301,7 +6300,6 @@ function App() {
     }).catch(() => done());
     supabasePullExpBank(currentUser).then(remoteEB => {
       const remoteIds = new Set(Object.keys(remoteEB));
-      realtimeUpdateRef.current = true;
       setExpBank(prev => {
         const result = { ...remoteEB };
         Object.entries(prev).forEach(([k, v]) => {
@@ -6316,7 +6314,6 @@ function App() {
       done();
     }).catch(() => done());
     supabasePullTransfers().then(remoteTransfers => {
-      realtimeUpdateRef.current = true;
       setTransfers(prev => {
         const localMap = new Map(prev.map(t => [t.id, t]));
         const remoteIds = new Set(remoteTransfers.map(t => t.id));

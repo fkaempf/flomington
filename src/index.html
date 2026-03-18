@@ -6418,6 +6418,13 @@ function App() {
   const [vcsRemindMin, setVcsRemindMin] = useLS('flo-vcs-remind-min', 15);
   const [vcsOverdueMin, setVcsOverdueMin] = useLS('flo-vcs-overdue-min', 30);
 
+  const sendNotification = useCallback((title, opts) => {
+    try { new Notification(title, opts); } catch {
+      // Android Chrome requires ServiceWorker notifications
+      if (navigator.serviceWorker) navigator.serviceWorker.ready.then(reg => reg.showNotification(title, opts)).catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     if (!vcsNotify || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     const fired = new Set();
@@ -6434,21 +6441,21 @@ function App() {
         const prefix = `vcs-${s.id}-${next.key}-${today()}`;
         if (next.timeUntilMs > 0 && next.timeUntilMs <= vcsRemindMin * 60000) {
           const k = prefix + '-remind';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${s.name}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${s.name}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
         }
         if (next.timeUntilMs <= 0 && next.timeUntilMs > -60000) {
           const k = prefix + '-now';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${s.name}`, { body: `${next.label} NOW`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${s.name}`, { body: `${next.label} NOW`, tag: k }); }
         }
         if (next.timeUntilMs < -(vcsOverdueMin * 60000)) {
           const k = prefix + '-overdue';
-          if (!fired.has(k)) { fired.add(k); new Notification(`⚠️ ${s.name}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${s.name}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
         }
         if (next.deadlineMs) {
           const untilDeadline = next.deadlineMs - now.getTime();
           if (untilDeadline > 0 && untilDeadline <= 30 * 60000) {
             const k = `vcs-${s.id}-deadline-${today()}`;
-            if (!fired.has(k)) { fired.add(k); new Notification(`⚠️ ${s.name}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
+            if (!fired.has(k)) { fired.add(k); sendNotification(`${s.name}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
           }
         }
       });
@@ -6463,21 +6470,21 @@ function App() {
         const prefix = `cvcs-${c.id}-${next.key}-${today()}`;
         if (next.timeUntilMs > 0 && next.timeUntilMs <= vcsRemindMin * 60000) {
           const k = prefix + '-remind';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${cName}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
         }
         if (next.timeUntilMs <= 0 && next.timeUntilMs > -60000) {
           const k = prefix + '-now';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `${next.label} NOW`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${cName}`, { body: `${next.label} NOW`, tag: k }); }
         }
         if (next.timeUntilMs < -(vcsOverdueMin * 60000)) {
           const k = prefix + '-overdue';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${cName}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
         }
         if (next.deadlineMs) {
           const untilDeadline = next.deadlineMs - now.getTime();
           if (untilDeadline > 0 && untilDeadline <= 30 * 60000) {
             const k = `cvcs-${c.id}-deadline-${today()}`;
-            if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
+            if (!fired.has(k)) { fired.add(k); sendNotification(`${cName}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
           }
         }
       });

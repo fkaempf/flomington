@@ -6488,7 +6488,7 @@ function App() {
   if (pendingUser) return <PinLock user={pendingUser} onSelectUser={u => setPendingUser(u)} onUnlock={() => { setCurrentUser(pendingUser); setPendingUser(null); }} onPinSet={() => setPinVersion(v => v + 1)} />;
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
+    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)', isolation: 'isolate' }}>
       <BackgroundCanvas type={bgEffect} />
       <AmbientFly />
 
@@ -6551,7 +6551,7 @@ function App() {
       )}
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto pb-28" style={{ position: 'relative', zIndex: 1 }}>
+      <main className="flex-1 overflow-y-auto pb-28" style={{ position: 'relative', zIndex: 1, WebkitTransform: 'translateZ(0)' }}>
         <div className="max-w-6xl mx-auto px-6 py-6">
           {tab === 'home' && <ErrorBoundary><HomeScreen stocks={stocks} setStocks={setStocks} crosses={crosses} setCrosses={setCrosses} toast={toast} onNewCross={() => setNewCrossOpen(true)} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} currentUser={currentUser} onTransfer={createTransfer} transfers={myTransfers} onAcceptTransfer={(t) => {
             if (t.type === 'stock') { markEdited(t.itemId); setStocks(p => p.map(s => s.id === t.itemId ? { ...s, maintainer: currentUser } : s)); }

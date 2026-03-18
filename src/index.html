@@ -394,9 +394,30 @@ input:focus, textarea:focus, select:focus {
 </head>
 <body>
 <div id="root"></div>
+<script>
+window.onerror = function(msg, src, line, col, err) {
+  var el = document.getElementById('root');
+  if (el && !el.children.length) {
+    var d = document.createElement('div');
+    d.style.cssText = 'padding:32px;color:#fca5a5;font-family:system-ui;background:#09090b;min-height:100vh';
+    var h = document.createElement('h2');
+    h.style.cssText = 'font-size:18px;margin-bottom:12px';
+    h.textContent = 'Something went wrong';
+    var p = document.createElement('p');
+    p.style.cssText = 'font-size:14px;color:#a1a1aa;margin-bottom:16px;word-break:break-all';
+    p.textContent = msg + ' (line ' + line + ')';
+    var b = document.createElement('button');
+    b.style.cssText = 'padding:8px 16px;background:#7c3aed;color:#fff;border:none;border-radius:8px;cursor:pointer';
+    b.textContent = 'Reload';
+    b.onclick = function() { location.reload(); };
+    d.appendChild(h); d.appendChild(p); d.appendChild(b);
+    el.appendChild(d);
+  }
+};
+</script>
 <script type="text/babel">
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
-console.log('[SYNC] Code version: 2026-03-16-v5');
+console.log('[SYNC] Code version: 2026-03-18-v1');
 
 /* ========== HELPERS ========== */
 const uid = () => crypto.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -6683,7 +6704,7 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);
 </script>
 <script>
 if ('serviceWorker' in navigator) {

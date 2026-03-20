@@ -5794,7 +5794,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     const isMedium = !isLarge && (spec.labelH > 25 || spec.labelW > 40);
     const qrSize = isLarge ? 16 : isMedium ? 14 : 8;
     const basePad = isLarge ? [2, 5, 3.5, 3] : isMedium ? [1.5, 3, 3, 2] : [0.8, 2, 2.8, 1];
-    const pad = `${basePad[0] + bufferTop}mm ${basePad[1] + bufferRight}mm ${basePad[2] + bufferBottom}mm ${basePad[3] + bufferLeft}mm`;
+    const pad = `${Math.max(basePad[0], bufferTop)}mm ${Math.max(basePad[1], bufferRight)}mm ${Math.max(basePad[2], bufferBottom)}mm ${Math.max(basePad[3], bufferLeft)}mm`;
     const gap = isLarge ? '2mm' : isMedium ? '2mm' : '1mm';
     const nameSize = isLarge ? '9pt' : isMedium ? '8.5pt' : '6.5pt';
     const genoSize = isLarge ? '6pt' : isMedium ? '5.5pt' : '4.5pt';

@@ -5837,7 +5837,7 @@ ${vertical ? `.label-inner {
   transform-origin: top left;
   width: ${spec.labelH}mm; height: ${spec.labelW}mm;
 }
-.label-text { text-align: center; }` : ''}
+.label-text { text-align: center; flex: 0 1 auto !important; min-width: 0; }` : ''}
 .label-qr { flex-shrink: 0; width: ${qrSize}mm; height: ${qrSize}mm; }
 .label-qr svg { display: block; width: ${qrSize}mm; height: ${qrSize}mm; }
 .label-text { flex: 1; min-width: 0; overflow: hidden; }

@@ -5781,13 +5781,13 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     // Scale sizes based on label dimensions
     const isLarge = spec.labelH > 35;
     const isMedium = !isLarge && (spec.labelH > 25 || spec.labelW > 40);
-    const qrSize = isLarge ? 16 : isMedium ? 12 : 8;
+    const qrSize = isLarge ? 16 : isMedium ? 14 : 8;
     const pad = isLarge ? '2mm 5mm 3.5mm 3mm' : isMedium ? '1.5mm 3mm 3mm 2mm' : '0.8mm 2mm 2.8mm 1mm';
-    const gap = isLarge ? '2mm' : isMedium ? '1.5mm' : '1mm';
-    const nameSize = isLarge ? '9pt' : isMedium ? '8pt' : '6.5pt';
-    const genoSize = isLarge ? '6pt' : isMedium ? '5pt' : '4.5pt';
+    const gap = isLarge ? '2mm' : isMedium ? '2mm' : '1mm';
+    const nameSize = isLarge ? '9pt' : isMedium ? '8.5pt' : '6.5pt';
+    const genoSize = isLarge ? '6pt' : isMedium ? '5.5pt' : '4.5pt';
     const genoClamp = isLarge ? 10 : isMedium ? 5 : 3;
-    const infoSize = isLarge ? '6pt' : isMedium ? '5pt' : '4.5pt';
+    const infoSize = isLarge ? '6pt' : isMedium ? '5.5pt' : '4.5pt';
 
     w.document.write(`<!DOCTYPE html><html><head><title>Flomington Labels</title>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"><\/script>
@@ -5859,7 +5859,7 @@ setTimeout(function(){ window.print(); }, 500);
             className="compact px-2 py-1.5 font-semibold rounded-lg"
             style={{ color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)', appearance: 'auto' }}>
             {Object.entries(LABEL_FORMATS).map(([k, v]) => (
-              <option key={k} value={k}>{k} ({v.labelW}x{v.labelH}mm, {v.cols * v.rows}/page)</option>
+              <option key={k} value={k}>{v.name} ({v.cols * v.rows}/page)</option>
             ))}
           </select>
           <div onClick={() => setShowQR(!showQR)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"

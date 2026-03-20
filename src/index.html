@@ -2042,16 +2042,19 @@ function Modal({ open, onClose, title, children, wide }) {
   useEffect(() => {
     const main = document.querySelector('main');
     if (!main) return;
-    const prev = main.style.overflow;
+    const prevMain = main.style.overflow;
+    const prevBody = document.body.style.overflow;
     main.style.overflow = 'hidden';
-    return () => { main.style.overflow = prev; };
+    document.body.style.overflow = 'hidden';
+    return () => { main.style.overflow = prevMain; document.body.style.overflow = prevBody; };
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-5" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-5" onClick={onClose} onWheel={e => e.stopPropagation()} onTouchMove={e => { if (!e.target.closest('[data-modal-content]')) e.preventDefault(); }}>
       <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', animation: 'backdrop-in 0.2s ease' }} />
-      <div className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[75vh] overflow-y-auto`}
+      <div data-modal-content className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[75vh] overflow-y-auto`}
         style={{
+          overscrollBehavior: 'contain',
           borderRadius: '28px',
           padding: '2.5rem',
           backgroundColor: 'rgba(15, 12, 41, 0.3)',
@@ -2082,14 +2085,16 @@ function Confirm({ open, onOk, onNo, title, msg, okLabel = 'Delete' }) {
     if (!open) return;
     const main = document.querySelector('main');
     if (!main) return;
-    const prev = main.style.overflow;
+    const prevMain = main.style.overflow;
+    const prevBody = document.body.style.overflow;
     main.style.overflow = 'hidden';
-    return () => { main.style.overflow = prev; };
+    document.body.style.overflow = 'hidden';
+    return () => { main.style.overflow = prevMain; document.body.style.overflow = prevBody; };
   }, [open]);
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={onNo}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={onNo} onWheel={e => e.stopPropagation()}>
       <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }} />
       <div className="relative card p-6 max-w-sm w-full anim-in" onClick={e => e.stopPropagation()}>
         <p className="text-sm font-bold mb-2" style={{ color: 'var(--text-1)' }}>{title}</p>
@@ -6593,7 +6598,7 @@ function App() {
   if (pendingUser) return <PinLock user={pendingUser} onSelectUser={u => setPendingUser(u)} onUnlock={() => { setCurrentUser(pendingUser); setPendingUser(null); }} onPinSet={() => setPinVersion(v => v + 1)} />;
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)', isolation: 'isolate' }}>
+    <div className="h-screen flex flex-col overflow-hidden" style={{ background: 'var(--bg)', isolation: 'isolate' }}>
       <BackgroundCanvas type={bgEffect} />
       <AmbientFly />
 

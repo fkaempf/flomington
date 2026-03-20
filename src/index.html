@@ -2049,10 +2049,10 @@ function Modal({ open, onClose, title, children, wide }) {
     return () => { main.style.overflow = prevMain; document.body.style.overflow = prevBody; };
   }, []);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-5 pt-5 pb-24" onClick={onClose} onWheel={e => e.stopPropagation()} onTouchMove={e => { if (!e.target.closest('[data-modal-content]')) e.preventDefault(); }}>
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-5 pt-5 pb-24" onClick={onClose} onWheel={e => e.stopPropagation()}>
       <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', animation: 'backdrop-in 0.2s ease' }} />
-      <div data-modal-content className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[75vh] overflow-y-auto`}
+      <div className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[75vh] overflow-y-auto`}
         style={{
           overscrollBehavior: 'contain',
           borderRadius: '28px',
@@ -2076,7 +2076,8 @@ function Modal({ open, onClose, title, children, wide }) {
         )}
         <div>{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2093,7 +2094,7 @@ function Confirm({ open, onOk, onNo, title, msg, okLabel = 'Delete' }) {
   }, [open]);
 
   if (!open) return null;
-  return (
+  return ReactDOM.createPortal(
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={onNo} onWheel={e => e.stopPropagation()}>
       <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }} />
       <div className="relative card p-6 max-w-sm w-full anim-in" onClick={e => e.stopPropagation()}>
@@ -2106,7 +2107,8 @@ function Confirm({ open, onOk, onNo, title, msg, okLabel = 'Delete' }) {
             style={{ background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>Cancel</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

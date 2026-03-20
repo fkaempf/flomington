@@ -5708,6 +5708,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
   const [format, setFormat] = useState('L7161');
   const [showGrid, setShowGrid] = useState(false);
   const [showQR, setShowQR] = useState(true);
+  const [vertical, setVertical] = useState(false);
   const [skipLabels, setSkipLabels] = useState(0);
 
   if (!open) return null;
@@ -5765,11 +5766,13 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
       const cells = pageItems.map((lb) => {
         if (!lb) return '<div class="label"></div>';
         return `<div class="label">
-          ${lb.qrUrl ? '<div class="label-qr" id="qr-' + lb.id + '"></div>' : ''}
-          <div class="label-text">
-            <div class="label-name">${lb.name}${lb.copies ? ' <span class="label-copy">#' + lb.copies + '</span>' : ''}</div>
-            ${lb.line2 ? '<div class="label-geno">' + lb.line2 + '</div>' : ''}
-            ${lb.line3 ? '<div class="label-info">' + lb.line3 + '</div>' : ''}
+          <div class="label-inner">
+            ${lb.qrUrl ? '<div class="label-qr" id="qr-' + lb.id + '"></div>' : ''}
+            <div class="label-text">
+              <div class="label-name">${lb.name}${lb.copies ? ' <span class="label-copy">#' + lb.copies + '</span>' : ''}</div>
+              ${lb.line2 ? '<div class="label-geno">' + lb.line2 + '</div>' : ''}
+              ${lb.line3 ? '<div class="label-info">' + lb.line3 + '</div>' : ''}
+            </div>
           </div>
         </div>`;
       }).join('\n');
@@ -5812,10 +5815,20 @@ body { font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: ex
 .label {
   width: ${spec.labelW}mm; height: ${spec.labelH}mm;
   overflow: hidden;
-  padding: ${pad};
-  display: flex; flex-direction: row; align-items: flex-end; gap: ${gap};
+  position: relative;
   border: ${showGrid ? '0.3pt dashed #ccc' : 'none'};
 }
+.label-inner {
+  display: flex; flex-direction: row; align-items: flex-end; gap: ${gap};
+  padding: ${pad};
+  width: ${spec.labelW}mm; height: ${spec.labelH}mm;
+  box-sizing: border-box;
+}
+${vertical ? `.label-inner {
+  transform: rotate(-90deg) translateX(-100%);
+  transform-origin: top left;
+  width: ${spec.labelH}mm; height: ${spec.labelW}mm;
+}` : ''}
 .label-qr { flex-shrink: 0; width: ${qrSize}mm; height: ${qrSize}mm; }
 .label-qr svg { display: block; width: ${qrSize}mm; height: ${qrSize}mm; }
 .label-text { flex: 1; min-width: 0; overflow: hidden; }
@@ -5869,6 +5882,10 @@ setTimeout(function(){ window.print(); }, 500);
           <div onClick={() => setShowGrid(!showGrid)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"
             style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', color: showGrid ? '#5eead4' : 'var(--text-3)', border: showGrid ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showGrid ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
             {showGrid ? '✓ Grid' : 'Grid'}
+          </div>
+          <div onClick={() => setVertical(!vertical)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', color: vertical ? '#5eead4' : 'var(--text-3)', border: vertical ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: vertical ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
+            {vertical ? '✓ Vertical' : 'Vertical'}
           </div>
           <div className="compact flex items-center gap-1 font-semibold rounded-lg"
             style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', border: skipLabels > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: skipLabels > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)' }}>

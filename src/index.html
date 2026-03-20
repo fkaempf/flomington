@@ -5710,10 +5710,10 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
   const [showQR, setShowQR] = useState(true);
   const [vertical, setVertical] = useState(false);
   const [skipLabels, setSkipLabels] = useState(0);
-  const [bufferTop, setBufferTop] = useState(0);
+  const [bufferTop, setBufferTop] = useState(15);
   const [bufferRight, setBufferRight] = useState(0);
   const [bufferBottom, setBufferBottom] = useState(0);
-  const [bufferLeft, setBufferLeft] = useState(0);
+  const [bufferLeft, setBufferLeft] = useState(15);
 
   if (!open) return null;
   const stockItems = printList.map(id => stocks.find(s => s.id === id)).filter(Boolean);

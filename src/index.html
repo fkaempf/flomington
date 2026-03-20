@@ -5789,7 +5789,8 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     const isLarge = spec.labelH > 35;
     const isMedium = !isLarge && (spec.labelH > 25 || spec.labelW > 40);
     const qrSize = isLarge ? 16 : isMedium ? 14 : 8;
-    const pad = isLarge ? '2mm 5mm 3.5mm 3mm' : isMedium ? '1.5mm 3mm 3mm 2mm' : '0.8mm 2mm 2.8mm 1mm';
+    const basePad = isLarge ? [2, 5, 3.5, 3] : isMedium ? [1.5, 3, 3, 2] : [0.8, 2, 2.8, 1];
+    const pad = `${basePad[0] + bufferTop}mm ${basePad[1] + bufferRight}mm ${basePad[2] + bufferBottom}mm ${basePad[3] + bufferLeft}mm`;
     const gap = isLarge ? '2mm' : isMedium ? '2mm' : '1mm';
     const nameSize = isLarge ? '9pt' : isMedium ? '8.5pt' : '6.5pt';
     const genoSize = isLarge ? '6pt' : isMedium ? '5.5pt' : '4.5pt';
@@ -5825,12 +5826,9 @@ body { font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: ex
 .label-inner {
   display: flex; flex-direction: ${vertical ? 'column' : 'row'}; align-items: center; justify-content: center; gap: ${gap};
   padding: ${pad};
-  ${bufferTop ? `padding-top: ${bufferTop}mm;` : ''}
-  ${bufferRight ? `padding-right: ${bufferRight}mm;` : ''}
-  ${bufferBottom ? `padding-bottom: ${bufferBottom}mm;` : ''}
-  ${bufferLeft ? `padding-left: ${bufferLeft}mm;` : ''}
   width: ${spec.labelW}mm; height: ${spec.labelH}mm;
   box-sizing: border-box;
+  overflow: hidden;
 }
 ${vertical ? `.label-inner {
   transform: rotate(-90deg) translateX(-100%);

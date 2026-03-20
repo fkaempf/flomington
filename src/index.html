@@ -5792,7 +5792,7 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     // Scale sizes based on label dimensions
     const isLarge = spec.labelH > 35;
     const isMedium = !isLarge && (spec.labelH > 25 || spec.labelW > 40);
-    const qrSize = isLarge ? 16 : isMedium ? 14 : 8;
+    const qrSize = isLarge ? 16 : isMedium ? 10 : 8;
     const basePad = isLarge ? [2, 5, 3.5, 3] : isMedium ? [1.5, 3, 3, 2] : [0.8, 2, 2.8, 1];
     const pad = `${Math.max(basePad[0], bufferTop)}mm ${Math.max(basePad[1], bufferRight)}mm ${Math.max(basePad[2], bufferBottom)}mm ${Math.max(basePad[3], bufferLeft)}mm`;
     const gap = isLarge ? '2mm' : isMedium ? '2mm' : '1mm';

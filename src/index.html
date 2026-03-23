@@ -3296,7 +3296,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                   newVcs.lastClearTime = action.time;
                   newVcs.lastClearTemp = temp || (v.overnightAt18 ? '18' : '25');
                   newVcs.virginDeadline = computeDeadline(action.time, newVcs.lastClearTemp === '18');
-                  newVcs.todayActions = [action];
+                  newVcs.todayActions = []; // New cycle — clear tracked by lastClearTime, evening auto-done
                 }
                 markEdited(crossId);
                 setCrosses(p => p.map(x => x.id === crossId ? { ...x, vcs: newVcs } : x));
@@ -3489,7 +3489,7 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                     newVcs.lastClearTime = action.time;
                     newVcs.lastClearTemp = temp || (v.overnightAt18 ? '18' : '25');
                     newVcs.virginDeadline = computeDeadline(action.time, newVcs.lastClearTemp === '18');
-                    newVcs.todayActions = [action]; // Reset for new window
+                    newVcs.todayActions = []; // New cycle — clear tracked by lastClearTime, evening auto-done
                   }
                   markEdited(s.id);
                   setStocks(p => p.map(st => st.id === s.id ? { ...st, vcs: newVcs } : st));

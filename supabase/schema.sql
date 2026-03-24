@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS stocks (
   copies integer DEFAULT 1,
   created_at timestamptz,
   last_flipped timestamptz,
+  vcs jsonb,
   updated_at timestamptz DEFAULT now()
 );
 
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS crosses (
   retinal_start_date timestamptz,
   wait_start_date timestamptz,
   ripening_start_date timestamptz,
+  vcs jsonb,
   notes text,
   updated_at timestamptz DEFAULT now()
 );

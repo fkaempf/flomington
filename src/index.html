@@ -453,7 +453,7 @@ const CROSS_FIELD_MAP = {
   crossType: 'cross_type', parentCrossId: 'parent_cross_id',
   experimentType: 'experiment_type', experimentDate: 'experiment_date',
   retinalStartDate: 'retinal_start_date', waitStartDate: 'wait_start_date',
-  ripeningStartDate: 'ripening_start_date',
+  ripeningStartDate: 'ripening_start_date', vcs: 'vcs',
 };
 
 function toSnake(obj, fieldMap) {
@@ -523,6 +523,7 @@ async function supabasePull() {
     if (!c.vials) c.vials = [];
     if (c.targetCount) c.targetCount = parseInt(c.targetCount) || 0;
     if (c.virginsCollected) c.virginsCollected = parseInt(c.virginsCollected) || 0;
+    if (typeof c.vcs === 'string') try { c.vcs = JSON.parse(c.vcs); } catch { c.vcs = null; }
     return c;
   });
   const pins = (pinsRes.data || []).map(row => ({ user: row.user_name, hash: row.hash }));
@@ -806,6 +807,7 @@ function useSupabaseRealtime(setStocks, setCrosses, setPinVersion, setVirginBank
           const item = toCamel(payload.new, CROSS_FIELD_MAP);
           if (!item.collected) item.collected = [];
           if (!item.vials) item.vials = [];
+          if (typeof item.vcs === 'string') try { item.vcs = JSON.parse(item.vcs); } catch { item.vcs = null; }
           setCrosses(prev => {
             const idx = prev.findIndex(c => c.id === item.id);
             if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...item }; return next; }
@@ -6303,7 +6305,16 @@ function App() {
         });
         return merged;
       });
-      if (remote.crosses) setCrosses(remote.crosses);
+      if (remote.crosses) setCrosses(prev => {
+        const localMap = new Map(prev.map(c => [c.id, c]));
+        const merged = remote.crosses.map(rc => {
+          const local = localMap.get(rc.id);
+          // Backfill VCS from local if remote lost it
+          if (local?.vcs && !rc.vcs) { vcsBackfilled = true; return { ...rc, vcs: local.vcs }; }
+          return rc;
+        });
+        return merged;
+      });
       if (remote.pins && remote.pins.length > 0) {
         let pinSynced = false;
         remote.pins.forEach(p => {
@@ -6355,7 +6366,8 @@ function App() {
         if (vcsBackfilled) {
           try {
             const st = JSON.parse(localStorage.getItem('flo-stocks') || '[]');
-            supabasePush(st, null, null).catch(() => {});
+            const cr = JSON.parse(localStorage.getItem('flo-crosses') || '[]');
+            supabasePush(st, cr, null).catch(() => {});
           } catch {}
         }
       }, 2000);

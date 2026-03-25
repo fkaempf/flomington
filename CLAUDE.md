@@ -5,7 +5,7 @@ Drosophila (fruit fly) stock manager web app for a neuroscience lab. Modular Rea
 
 ## Architecture
 ```
-vite-src/
+src/
 ├── App.jsx                  # Main shell: state, sync, routing, nav
 ├── main.jsx                 # Entry point (ReactDOM.createRoot)
 ├── index.html               # HTML shell

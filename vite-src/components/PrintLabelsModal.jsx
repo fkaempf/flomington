@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal, Btn } from './ui';
 import { LABEL_FORMATS } from '../utils/constants.js';
 import { sn, getTL } from '../utils/helpers.js';
@@ -25,10 +25,19 @@ function crossLabelText(c, stocks) {
 }
 
 function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCrosses, setPrintListCrosses, printListVirgins, setPrintListVirgins, printListExps, setPrintListExps, stocks, crosses, expBank, toast }) {
-  const [format, setFormat] = useState('L7161');
+  const [format, setFormat] = useState('L4737');
   const [showGrid, setShowGrid] = useState(false);
   const [showQR, setShowQR] = useState(true);
+  const [vertical, setVertical] = useState(false);
   const [skipLabels, setSkipLabels] = useState(0);
+  const [bufferTop, setBufferTop] = useState(0);
+  const [bufferRight, setBufferRight] = useState(0);
+  const [bufferBottom, setBufferBottom] = useState(0);
+  const [bufferLeft, setBufferLeft] = useState(15);
+  useEffect(() => {
+    if (vertical) { setBufferLeft(0); setBufferTop(15); }
+    else { setBufferTop(0); setBufferLeft(15); }
+  }, [vertical]);
 
   if (!open) return null;
   const stockItems = printList.map(id => stocks.find(s => s.id === id)).filter(Boolean);
@@ -64,7 +73,8 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
       allLabels.push({ id: 'c-' + c.id, name: info.name, line2: info.action, line3: info.temp, qrUrl: showQR ? qrBase + '?c=' + c.id.slice(0, 8) : null, isCross: true });
     });
     virginItems.forEach(s => {
-      allLabels.push({ id: 'v-' + s.id, name: esc(s.name), line2: esc(s.genotype || ''), line3: '\u24CB', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
+      const vHasSibling = stocks.some(x => x.id !== s.id && x.name === s.name && (x.category || 'No Collection') === (s.category || 'No Collection'));
+      allLabels.push({ id: 'v-' + s.id, name: esc(s.name + (s.vcs?.enabled ? ' [VCS]' : '')), copies: vHasSibling ? (s.copies || 1) : 0, line2: esc(s.genotype || ''), line3: '\u24CB', qrUrl: showQR ? qrBase + '?s=' + s.id.slice(0, 8) : null });
     });
     expItems.forEach(e => {
       const eqr = showQR ? qrBase + (e.source === 'cross' ? '?c=' : '?s=') + e.id.slice(0, 8) : null;
@@ -84,11 +94,13 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
       const cells = pageItems.map((lb) => {
         if (!lb) return '<div class="label"></div>';
         return `<div class="label">
-          ${lb.qrUrl ? '<div class="label-qr" id="qr-' + lb.id + '"></div>' : ''}
-          <div class="label-text">
-            <div class="label-name">${lb.name}${lb.copies ? ' <span class="label-copy">#' + lb.copies + '</span>' : ''}</div>
-            ${lb.line2 ? '<div class="label-geno">' + lb.line2 + '</div>' : ''}
-            ${lb.line3 ? '<div class="label-info">' + lb.line3 + '</div>' : ''}
+          <div class="label-inner">
+            ${lb.qrUrl ? '<div class="label-qr" id="qr-' + lb.id + '"></div>' : ''}
+            <div class="label-text">
+              <div class="label-name">${lb.name}${lb.copies ? ' <span class="label-copy">#' + lb.copies + '</span>' : ''}</div>
+              ${lb.line2 ? '<div class="label-geno">' + lb.line2 + '</div>' : ''}
+              ${lb.line3 ? '<div class="label-info">' + lb.line3 + '</div>' : ''}
+            </div>
           </div>
         </div>`;
       }).join('\n');
@@ -98,14 +110,16 @@ function PrintLabelsModal({ open, onClose, printList, setPrintList, printListCro
     const qrData = JSON.stringify(allLabels.filter(lb => lb.qrUrl).map(lb => ({ id: lb.id, url: lb.qrUrl })));
 
     // Scale sizes based on label dimensions
-    const isLarge = spec.labelH > 30;
-    const qrSize = isLarge ? 16 : 8;
-    const pad = isLarge ? '2mm 5mm 3.5mm 3mm' : '0.8mm 2mm 2.8mm 1mm';
-    const gap = isLarge ? '2mm' : '1mm';
-    const nameSize = isLarge ? '9pt' : '6.5pt';
-    const genoSize = isLarge ? '6pt' : '4.5pt';
-    const genoClamp = isLarge ? 10 : 3;
-    const infoSize = isLarge ? '6pt' : '4.5pt';
+    const isLarge = spec.labelH > 35;
+    const isMedium = !isLarge && (spec.labelH > 25 || spec.labelW > 40);
+    const qrSize = format === 'L4737' ? 14 : isLarge ? 16 : isMedium ? 10 : 8;
+    const basePad = isLarge ? [2, 5, 3.5, 3] : isMedium ? [1.5, 3, 3, 2] : [0.8, 2, 2.8, 1];
+    const pad = `${Math.max(basePad[0], bufferTop)}mm ${Math.max(basePad[1], bufferRight)}mm ${Math.max(basePad[2], bufferBottom)}mm ${Math.max(basePad[3], bufferLeft)}mm`;
+    const gap = isLarge ? '2mm' : isMedium ? '2mm' : '1mm';
+    const nameSize = isLarge ? '9pt' : isMedium ? '8.5pt' : '6.5pt';
+    const genoSize = isLarge ? '6pt' : isMedium ? '5.5pt' : '4.5pt';
+    const genoClamp = isLarge ? 10 : isMedium ? 5 : 3;
+    const infoSize = isLarge ? '6pt' : isMedium ? '5.5pt' : '4.5pt';
 
     w.document.write(`<!DOCTYPE html><html><head><title>Flomington Labels</title>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"><\/script>
@@ -130,10 +144,22 @@ body { font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: ex
 .label {
   width: ${spec.labelW}mm; height: ${spec.labelH}mm;
   overflow: hidden;
-  padding: ${pad};
-  display: flex; flex-direction: row; align-items: flex-end; gap: ${gap};
+  position: relative;
   border: ${showGrid ? '0.3pt dashed #ccc' : 'none'};
 }
+.label-inner {
+  display: flex; flex-direction: ${vertical ? 'column' : 'row'}; align-items: center; justify-content: center; gap: ${gap};
+  padding: ${pad};
+  width: ${spec.labelW}mm; height: ${spec.labelH}mm;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+${vertical ? `.label-inner {
+  transform: rotate(-90deg) translateX(-100%);
+  transform-origin: top left;
+  width: ${spec.labelH}mm; height: ${spec.labelW}mm;
+}
+.label-text { text-align: center; flex: 0 1 auto !important; min-width: 0; }` : ''}
 .label-qr { flex-shrink: 0; width: ${qrSize}mm; height: ${qrSize}mm; }
 .label-qr svg { display: block; width: ${qrSize}mm; height: ${qrSize}mm; }
 .label-text { flex: 1; min-width: 0; overflow: hidden; }
@@ -177,7 +203,7 @@ setTimeout(function(){ window.print(); }, 500);
             className="compact px-2 py-1.5 font-semibold rounded-lg"
             style={{ color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)', appearance: 'auto' }}>
             {Object.entries(LABEL_FORMATS).map(([k, v]) => (
-              <option key={k} value={k}>{k} ({v.labelW}x{v.labelH}mm, {v.cols * v.rows}/page)</option>
+              <option key={k} value={k}>{v.name} ({v.cols * v.rows}/page)</option>
             ))}
           </select>
           <div onClick={() => setShowQR(!showQR)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"
@@ -188,6 +214,10 @@ setTimeout(function(){ window.print(); }, 500);
             style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', color: showGrid ? '#5eead4' : 'var(--text-3)', border: showGrid ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: showGrid ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
             {showGrid ? '✓ Grid' : 'Grid'}
           </div>
+          <div onClick={() => setVertical(!vertical)} className="compact font-semibold rounded-lg cursor-pointer select-none flex items-center justify-center"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', color: vertical ? '#5eead4' : 'var(--text-3)', border: vertical ? '1px solid rgba(0,128,128,0.3)' : '1px solid var(--border)', background: vertical ? 'rgba(0,128,128,0.1)' : 'var(--surface-2)' }}>
+            {vertical ? '✓ Vertical' : 'Vertical'}
+          </div>
           <div className="compact flex items-center gap-1 font-semibold rounded-lg"
             style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', border: skipLabels > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: skipLabels > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: skipLabels > 0 ? '#fbbf24' : 'var(--text-3)' }}>
             <span>Skip</span>
@@ -195,7 +225,37 @@ setTimeout(function(){ window.print(); }, 500);
               className="compact" style={{ width: '20px', textAlign: 'center', outline: 'none', fontWeight: 600, padding: 0, margin: 0, lineHeight: '1' }} />
           </div>
         </div>
-        <p className="text-xs mb-3" style={{ color: 'var(--text-3)' }}>Feed label paper with arrow pointing right →</p>
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <div className="flex-1" />
+          <div className="compact flex items-center gap-1 font-semibold rounded-lg"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', border: bufferTop > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: bufferTop > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: bufferTop > 0 ? '#fbbf24' : 'var(--text-3)' }}>
+            <span>Fold top</span>
+            <input type="number" min="0" step="0.5" value={bufferTop} onChange={e => setBufferTop(Math.max(0, parseFloat(e.target.value) || 0))}
+              className="compact" style={{ width: '26px', textAlign: 'center', outline: 'none', fontWeight: 600, padding: 0, margin: 0, lineHeight: '1' }} />
+            <span>mm</span>
+          </div>
+          <div className="compact flex items-center gap-1 font-semibold rounded-lg"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', border: bufferRight > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: bufferRight > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: bufferRight > 0 ? '#fbbf24' : 'var(--text-3)' }}>
+            <span>Fold right</span>
+            <input type="number" min="0" step="0.5" value={bufferRight} onChange={e => setBufferRight(Math.max(0, parseFloat(e.target.value) || 0))}
+              className="compact" style={{ width: '26px', textAlign: 'center', outline: 'none', fontWeight: 600, padding: 0, margin: 0, lineHeight: '1' }} />
+            <span>mm</span>
+          </div>
+          <div className="compact flex items-center gap-1 font-semibold rounded-lg"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', border: bufferBottom > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: bufferBottom > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: bufferBottom > 0 ? '#fbbf24' : 'var(--text-3)' }}>
+            <span>Fold bottom</span>
+            <input type="number" min="0" step="0.5" value={bufferBottom} onChange={e => setBufferBottom(Math.max(0, parseFloat(e.target.value) || 0))}
+              className="compact" style={{ width: '26px', textAlign: 'center', outline: 'none', fontWeight: 600, padding: 0, margin: 0, lineHeight: '1' }} />
+            <span>mm</span>
+          </div>
+          <div className="compact flex items-center gap-1 font-semibold rounded-lg"
+            style={{ fontSize: '11px', height: '29px', padding: '0 8px', boxSizing: 'border-box', border: bufferLeft > 0 ? '1px solid rgba(251,191,36,0.3)' : '1px solid var(--border)', background: bufferLeft > 0 ? 'rgba(251,191,36,0.1)' : 'var(--surface-2)', color: bufferLeft > 0 ? '#fbbf24' : 'var(--text-3)' }}>
+            <span>Fold left</span>
+            <input type="number" min="0" step="0.5" value={bufferLeft} onChange={e => setBufferLeft(Math.max(0, parseFloat(e.target.value) || 0))}
+              className="compact" style={{ width: '26px', textAlign: 'center', outline: 'none', fontWeight: 600, padding: 0, margin: 0, lineHeight: '1' }} />
+            <span>mm</span>
+          </div>
+        </div>
 
         {totalCount === 0 ? (
           <div className="text-center py-8">

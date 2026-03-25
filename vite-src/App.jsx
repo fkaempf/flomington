@@ -203,6 +203,8 @@ function App() {
   const [syncStatus, setSyncStatus] = useState('');
   const syncTimer = useRef(null);
   const realtimeUpdateRef = useRef(false);
+  const syncErrorLog = useRef([]);
+  const pullInProgress = useRef(false);
   const deletedExpIds = useRef(new Set());
 
   const [pinVersion, setPinVersion] = useState(0);
@@ -343,7 +345,7 @@ function App() {
   const pushNow = useRef(() => {});
   useEffect(() => {
     if (!sbConfigured || initialPushBlocked.current || demoMode.current) return;
-    if (realtimeUpdateRef.current) { realtimeUpdateRef.current = false; if (!pendingPush.current) return; }
+    if (realtimeUpdateRef.current || pullInProgress.current) { realtimeUpdateRef.current = false; if (!pendingPush.current) return; }
     pendingPush.current = true;
     clearTimeout(syncTimer.current);
     const doPush = () => {
@@ -356,7 +358,8 @@ function App() {
         supabaseSyncDeletes('stocks', new Set(stocks.map(s => s.id)));
         supabaseSyncDeletes('crosses', new Set(crosses.map(c => c.id)));
         setSyncStatus('Synced ' + new Date().toLocaleTimeString());
-      }).catch(() => {
+      }).catch((err) => {
+        syncErrorLog.current.push({ time: new Date().toISOString(), type: 'push', error: String(err) });
         setSyncStatus('Push failed – retrying...');
         setTimeout(doPush, 5000);
       });
@@ -376,6 +379,36 @@ function App() {
     document.addEventListener('visibilitychange', onVisChange);
     return () => { window.removeEventListener('beforeunload', flush); document.removeEventListener('visibilitychange', onVisChange); };
   }, []);
+
+  const lastRePull = useRef(0);
+  const rePullAux = useCallback(() => {
+    if (!sbConfigured || pullInProgress.current) return;
+    pullInProgress.current = true;
+    Promise.all([
+      supabasePullVirginBank(currentUser),
+      supabasePullExpBank(currentUser),
+      supabasePullTransfers(),
+    ]).then(([remoteVB, remoteEB, remoteT]) => {
+      realtimeUpdateRef.current = true;
+      setVirginBank(remoteVB);
+      realtimeUpdateRef.current = true;
+      setExpBank(remoteEB);
+      realtimeUpdateRef.current = true;
+      setTransfers(prev => {
+        const localMap = new Map(prev.map(t => [t.id, t]));
+        const merged = [...prev];
+        remoteT.forEach(rt => { if (!localMap.has(rt.id)) merged.push(rt); });
+        return merged;
+      });
+    }).catch(() => {}).finally(() => { pullInProgress.current = false; });
+  }, [sbConfigured, currentUser]);
+
+  useEffect(() => {
+    const onVis = () => { if (!document.hidden) rePullAux(); };
+    document.addEventListener('visibilitychange', onVis);
+    const iv = setInterval(rePullAux, 30000);
+    return () => { document.removeEventListener('visibilitychange', onVis); clearInterval(iv); };
+  }, [rePullAux]);
 
   // Real-time subscriptions for cross-device sync
   useSupabaseRealtime(
@@ -437,6 +470,12 @@ function App() {
     }
   }, [deepLinkCross, crosses]);
 
+  const sendNotification = useCallback((title, opts) => {
+    try { new Notification(title, opts); } catch {
+      if (navigator.serviceWorker) navigator.serviceWorker.ready.then(reg => reg.showNotification(title, opts)).catch(() => {});
+    }
+  }, []);
+
   // Virgin collection notifications - VCS schedule-based
   const [vcsNotify, setVcsNotify] = useLS('flo-vcs-notify', true);
   const [vcsRemindMin, setVcsRemindMin] = useLS('flo-vcs-remind-min', 15);
@@ -458,21 +497,21 @@ function App() {
         const prefix = `vcs-${s.id}-${next.key}-${today()}`;
         if (next.timeUntilMs > 0 && next.timeUntilMs <= vcsRemindMin * 60000) {
           const k = prefix + '-remind';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${s.name}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${s.name}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
         }
         if (next.timeUntilMs <= 0 && next.timeUntilMs > -60000) {
           const k = prefix + '-now';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${s.name}`, { body: `${next.label} NOW`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${s.name}`, { body: `${next.label} NOW`, tag: k }); }
         }
         if (next.timeUntilMs < -(vcsOverdueMin * 60000)) {
           const k = prefix + '-overdue';
-          if (!fired.has(k)) { fired.add(k); new Notification(`⚠️ ${s.name}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`⚠️ ${s.name}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
         }
         if (next.deadlineMs) {
           const untilDeadline = next.deadlineMs - now.getTime();
           if (untilDeadline > 0 && untilDeadline <= 30 * 60000) {
             const k = `vcs-${s.id}-deadline-${today()}`;
-            if (!fired.has(k)) { fired.add(k); new Notification(`⚠️ ${s.name}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
+            if (!fired.has(k)) { fired.add(k); sendNotification(`⚠️ ${s.name}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
           }
         }
       });
@@ -487,21 +526,21 @@ function App() {
         const prefix = `cvcs-${c.id}-${next.key}-${today()}`;
         if (next.timeUntilMs > 0 && next.timeUntilMs <= vcsRemindMin * 60000) {
           const k = prefix + '-remind';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${cName}`, { body: `${next.label} in ${fmtDur(next.timeUntilMs)}`, tag: k }); }
         }
         if (next.timeUntilMs <= 0 && next.timeUntilMs > -60000) {
           const k = prefix + '-now';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `${next.label} NOW`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${cName}`, { body: `${next.label} NOW`, tag: k }); }
         }
         if (next.timeUntilMs < -(vcsOverdueMin * 60000)) {
           const k = prefix + '-overdue';
-          if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
+          if (!fired.has(k)) { fired.add(k); sendNotification(`${cName}`, { body: `${next.label} OVERDUE by ${fmtDur(Math.abs(next.timeUntilMs))}`, tag: k }); }
         }
         if (next.deadlineMs) {
           const untilDeadline = next.deadlineMs - now.getTime();
           if (untilDeadline > 0 && untilDeadline <= 30 * 60000) {
             const k = `cvcs-${c.id}-deadline-${today()}`;
-            if (!fired.has(k)) { fired.add(k); new Notification(`${cName}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
+            if (!fired.has(k)) { fired.add(k); sendNotification(`${cName}`, { body: `Virgin deadline in ${fmtDur(untilDeadline)}!`, tag: k }); }
           }
         }
       });
@@ -553,7 +592,17 @@ function App() {
                 style={{ background: 'rgba(239,68,68,0.1)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.15)' }}>Offline</span>
             )}
             {syncStatus && (
-              <div className="flex items-center gap-1" title={syncStatus}>
+              <div className="flex items-center gap-1" title={syncStatus}
+                onClick={() => {
+                  if (syncErrorLog.current.length > 0) {
+                    navigator.clipboard.writeText(JSON.stringify(syncErrorLog.current, null, 2));
+                    toast.add('Error log copied to clipboard');
+                  } else {
+                    rePullAux();
+                    toast.add('Pulling...');
+                  }
+                }}
+                style={{ cursor: 'pointer' }}>
                 <div className="w-1.5 h-1.5 rounded-full" style={{
                   background: syncStatus.startsWith('Synced') ? '#22c55e' :
                               syncStatus.includes('failed') || syncStatus.includes('error') ? '#ef4444' :
@@ -584,7 +633,7 @@ function App() {
       )}
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto pb-28" style={{ position: 'relative', zIndex: 1 }}>
+      <main className="flex-1 overflow-y-auto pb-28" style={{ position: 'relative', zIndex: 1, WebkitTransform: 'translateZ(0)' }}>
         <div className="max-w-6xl mx-auto px-6 py-6">
           {tab === 'home' && <ErrorBoundary><HomeScreen stocks={stocks} setStocks={setStocks} crosses={crosses} setCrosses={setCrosses} toast={toast} onNewCross={() => setNewCrossOpen(true)} virginBank={virginBank} setVirginBank={setVirginBank} virginsPerCross={virginsPerCross} currentUser={currentUser} onTransfer={createTransfer} transfers={myTransfers} onAcceptTransfer={(t) => {
             if (t.type === 'stock') { markEdited(t.itemId); setStocks(p => p.map(s => s.id === t.itemId ? { ...s, maintainer: currentUser } : s)); }

@@ -51,6 +51,9 @@ export function sanitizeRow(row) {
   return row;
 }
 
+const _lastPushed = { stocks: new Map(), crosses: new Map() };
+function _rowHash(row) { return JSON.stringify(row); }
+
 // Supabase config - hardcoded defaults, localStorage can override
 export const SUPABASE_URL = 'https://rawkyzzqyvizrglanyzi.supabase.co';
 export const SUPABASE_KEY = 'sb_publishable_yfVKfIlgBL9OsTW3uDgx8A_zBkjFyys';
@@ -105,22 +108,37 @@ export async function supabasePull() {
 export async function supabasePush(stocks, crosses, pins) {
   const sb = getSb();
   if (!sb) throw new Error('Supabase not configured');
+  let stocksPushed = 0, crossesPushed = 0;
   if (stocks && stocks.length > 0) {
-    const rows = stocks.map(s => toSnake(s, STOCK_FIELD_MAP));
-    const { error } = await sb.from('stocks').upsert(rows, { onConflict: 'id' });
-    if (error) throw error;
+    const allRows = stocks.map(s => sanitizeRow(toSnake(s, STOCK_FIELD_MAP)));
+    const changed = allRows.filter(r => _rowHash(r) !== _lastPushed.stocks.get(r.id));
+    if (changed.length > 0) {
+      const { error } = await sb.from('stocks').upsert(changed, { onConflict: 'id' });
+      if (error) throw error;
+      stocksPushed = changed.length;
+    }
+    const newSnap = new Map();
+    allRows.forEach(r => newSnap.set(r.id, _rowHash(r)));
+    _lastPushed.stocks = newSnap;
   }
   if (crosses && crosses.length > 0) {
-    const rows = crosses.map(c => toSnake(c, CROSS_FIELD_MAP));
-    const { error } = await sb.from('crosses').upsert(rows, { onConflict: 'id' });
-    if (error) throw error;
+    const allRows = crosses.map(c => sanitizeRow(toSnake(c, CROSS_FIELD_MAP)));
+    const changed = allRows.filter(r => _rowHash(r) !== _lastPushed.crosses.get(r.id));
+    if (changed.length > 0) {
+      const { error } = await sb.from('crosses').upsert(changed, { onConflict: 'id' });
+      if (error) throw error;
+      crossesPushed = changed.length;
+    }
+    const newSnap = new Map();
+    allRows.forEach(r => newSnap.set(r.id, _rowHash(r)));
+    _lastPushed.crosses = newSnap;
   }
   if (pins && pins.length > 0) {
     const rows = pins.map(p => ({ user_name: p.user, hash: p.hash }));
     const { error } = await sb.from('pins').upsert(rows, { onConflict: 'user_name' });
     if (error) throw error;
   }
-  return { stockCount: stocks?.length || 0, crossCount: crosses?.length || 0 };
+  return { stockCount: stocksPushed, crossCount: crossesPushed };
 }
 
 export async function supabaseSyncDeletes(table, localIds) {
@@ -141,7 +159,6 @@ export async function supabasePushVirginBank(userName, virginBank) {
     .filter(([, count]) => count > 0)
     .map(([stockId, count]) => ({
       user_name: userName, stock_id: stockId, count,
-      updated_at: new Date().toISOString(),
     }));
   if (rows.length > 0) {
     const { error } = await sb.from('virgin_banks').upsert(rows, { onConflict: 'user_name,stock_id' });

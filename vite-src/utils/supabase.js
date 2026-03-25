@@ -21,6 +21,7 @@ export const CROSS_FIELD_MAP = {
   experimentType: 'experiment_type', experimentDate: 'experiment_date',
   retinalStartDate: 'retinal_start_date', waitStartDate: 'wait_start_date',
   ripeningStartDate: 'ripening_start_date',
+  vcs: 'vcs',
 };
 
 export function toSnake(obj, fieldMap) {
@@ -40,6 +41,14 @@ export function toCamel(obj, fieldMap) {
     out[camelKey] = val;
   }
   return out;
+}
+
+export function sanitizeRow(row) {
+  for (const k of Object.keys(row)) {
+    if (row[k] === '') row[k] = null;
+    if (k === 'vcs' && row[k] && typeof row[k] === 'object') row[k] = JSON.stringify(row[k]);
+  }
+  return row;
 }
 
 // Supabase config - hardcoded defaults, localStorage can override

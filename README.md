@@ -2,7 +2,7 @@
 
 A Drosophila fly stock manager built for lab teams. Tracks stocks, crosses, virgin collections, experimental animals, and maintenance schedules with Supabase sync.
 
-**Live:** [floriankaempf.com/flomington-refactored](https://floriankaempf.com/flomington-refactored/)
+**Live:** [floriankaempf.com/flomington](https://floriankaempf.com/flomington/)
 
 ## Features
 

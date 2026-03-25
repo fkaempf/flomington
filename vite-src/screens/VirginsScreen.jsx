@@ -3,6 +3,7 @@ import { Inp } from '../components/ui';
 
 function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross, printListVirgins, setPrintListVirgins }) {
   const [search, setSearch] = useState('');
+  const [editingVirginId, setEditingVirginId] = useState(null);
   const stocksWithVirgins = useMemo(() => {
     return stocks.map(s => ({
       ...s,
@@ -36,7 +37,22 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross,
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {bankedStocks.map(s => (
               <div key={s.id} className="flex items-center gap-2 p-3 rounded-xl transition-all" style={{ background: 'rgba(249,168,212,0.06)', border: '1px solid rgba(249,168,212,0.1)' }}>
-                <span className="text-xl font-bold" style={{ color: '#f9a8d4' }}>{s.count}</span>
+                {editingVirginId === s.id ? (
+                  <input type="number" className="text-xl font-bold w-12 bg-transparent text-center outline-none"
+                    style={{ color: '#f9a8d4', border: '1px solid rgba(249,168,212,0.3)', borderRadius: '6px' }}
+                    defaultValue={virginBank[s.id]} autoFocus min="0"
+                    onFocus={e => e.target.select()}
+                    onBlur={e => {
+                      const val = Math.max(0, parseInt(e.target.value) || 0);
+                      if (val === 0) { setVirginBank(prev => { const next = {...prev}; delete next[s.id]; return next; }); }
+                      else setVirginBank(prev => ({...prev, [s.id]: val}));
+                      setEditingVirginId(null);
+                    }}
+                    onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setEditingVirginId(null); }}
+                  />
+                ) : (
+                  <span className="text-xl font-bold" onClick={() => setEditingVirginId(s.id)} style={{ color: '#f9a8d4', cursor: 'pointer' }}>{s.count}</span>
+                )}
                 <div className="flex-1 min-w-0 cursor-pointer active:scale-95" onClick={() => onStartCross?.(s.id)}>
                   <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
                   <p className="text-[10px]" style={{ color: 'var(--text-3)' }}>♀ banked · tap to cross</p>

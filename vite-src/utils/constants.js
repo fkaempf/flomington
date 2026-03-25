@@ -1,6 +1,6 @@
 /* ========== CONSTANTS ========== */
 
-export const USERS = ['Flo', 'Bella', 'Seba', 'Catherine', 'Tomke', 'Shahar', 'Myrto'];
+export const USERS = ['Flo', 'Bella', 'Seba', 'Catherine', 'Tomke', 'Shahar', 'Myrto', 'Greg'];
 
 export const STATUSES = ['set up', 'waiting for virgins', 'collecting virgins', 'waiting for progeny', 'collecting progeny', 'screening', 'ripening', 'done'];
 export const STATUS_SHORT = ['set', 'w.vgn', 'vgn', 'w.prg', 'coll', 'scr', 'ripe', 'done'];
@@ -21,6 +21,8 @@ export const VCS_DEFAULTS = {
 export const LABEL_FORMATS = {
   'L7651': { name: 'Avery J8651 / L7651', cols: 5, rows: 13, labelW: 38.1, labelH: 21.2, marginTop: 10.7, marginLeft: 4.75, gapX: 2.5, gapY: 0, pageW: 210, pageH: 297 },
   'L7161': { name: 'Avery J8161 / L7161', cols: 3, rows: 6, labelW: 63.5, labelH: 46.6, marginTop: 8.7, marginLeft: 7.21, gapX: 2.54, gapY: 0, pageW: 210, pageH: 297 },
+  'L4736': { name: 'Avery L4736 [removable]', cols: 4, rows: 12, labelW: 45.7, labelH: 21.2, marginTop: 10.7, marginLeft: 10.05, gapX: 2.5, gapY: 0, pageW: 210, pageH: 297, removable: true },
+  'L4737': { name: 'Avery L4737 [removable]', cols: 3, rows: 9, labelW: 63.5, labelH: 29.6, marginTop: 13.15, marginLeft: 5.21, gapX: 2.54, gapY: 0, pageW: 210, pageH: 297, removable: true },
 };
 
 export const OPTO = ['cschrimson', 'chrimson', 'chr2', 'reachr', 'chrmine', 'chronos', 'cochr', 'gtacr'];

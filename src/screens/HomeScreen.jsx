@@ -467,7 +467,10 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                         {/* Inline virgin log prompt - logs to cross.virginsCollected */}
                         {crossVcsBankPrompt?.crossId === c.id && (
                           <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.15)' }}>
-                            <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#5eead4' }}>Log virgins collected?</p>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <p className="text-[9px] font-semibold" style={{ color: '#5eead4' }}>Log virgins collected</p>
+                              <span className="text-[9px] font-bold" style={{ color: '#5eead4' }}>{c.virginsCollected || 0}/{virginsPerCross || 5}</span>
+                            </div>
                             <div className="flex gap-1.5">
                               {[1, 3, 5].map(n => (
                                 <button key={n} onClick={() => {
@@ -476,18 +479,18 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                                   if (newCount >= (virginsPerCross || 5)) {
                                     setCrosses(p => p.map(x => x.id === c.id ? { ...x, virginsCollected: newCount, status: 'waiting for progeny', waitStartDate: today(), vcs: null } : x));
                                     toast.add(`${virginsPerCross || 5} virgins collected → waiting for progeny`);
+                                    setCrossVcsBankPrompt(null);
                                   } else {
                                     setCrosses(p => p.map(x => x.id === c.id ? { ...x, virginsCollected: newCount } : x));
                                     toast.add(`+${n} virgin${n > 1 ? 's' : ''} (${newCount}/${virginsPerCross || 5})`);
                                   }
-                                  setCrossVcsBankPrompt(null);
                                 }}
                                   className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                                   style={{ background: 'rgba(94,234,212,0.1)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
                               ))}
                               <button onClick={() => setCrossVcsBankPrompt(null)}
                                 className="px-3 py-2 text-[12px] rounded-lg cursor-pointer"
-                                style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Skip</button>
+                                style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Done</button>
                             </div>
                           </div>
                         )}
@@ -642,20 +645,22 @@ function HomeScreen({ stocks, setStocks, crosses, setCrosses, toast, onNewCross,
                     {/* Inline virgin bank prompt */}
                     {vcsBankPrompt?.stockId === s.id && (
                       <div className="mt-2 p-2 rounded-lg" onClick={e => e.stopPropagation()} style={{ background: 'rgba(94,234,212,0.06)', border: '1px solid rgba(94,234,212,0.15)' }}>
-                        <p className="text-[9px] font-semibold mb-1.5" style={{ color: '#5eead4' }}>Log virgins to bank?</p>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-[9px] font-semibold" style={{ color: '#5eead4' }}>Log virgins to bank</p>
+                          {(virginBank[s.id] || 0) > 0 && <span className="text-[9px] font-bold" style={{ color: '#5eead4' }}>{virginBank[s.id]} banked</span>}
+                        </div>
                         <div className="flex gap-1.5">
                           {[1, 3, 5].map(n => (
                             <button key={n} onClick={() => {
                               setVirginBank(prev => ({ ...prev, [s.id]: (prev[s.id] || 0) + n }));
                               toast.add(`+${n} virgins banked for ${s.name}`);
-                              setVcsBankPrompt(null);
                             }}
                               className="flex-1 px-3 py-2 text-[12px] font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
                               style={{ background: 'rgba(94,234,212,0.1)', color: '#5eead4', border: '1px solid rgba(94,234,212,0.15)' }}>+{n}</button>
                           ))}
                           <button onClick={() => setVcsBankPrompt(null)}
                             className="px-3 py-2 text-[12px] rounded-lg cursor-pointer"
-                            style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Skip</button>
+                            style={{ color: 'var(--text-3)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>Done</button>
                         </div>
                       </div>
                     )}

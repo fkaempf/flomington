@@ -75,7 +75,7 @@ function VirginsScreen({ stocks, virginBank, setVirginBank, toast, onStartCross,
       <p className="section-header">Log Virgins</p>
       <Inp placeholder="Search stocks..." value={search} onChange={e => setSearch(e.target.value)} className="mb-4" />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-8">
-        {stocks.filter(s => !search || [s.name, s.genotype || ''].some(x => x.toLowerCase().includes(search.toLowerCase()))).map(s => {
+        {stocks.filter(s => !search || [s.name, s.genotype || ''].some(x => x.toLowerCase().includes(search.toLowerCase()))).sort((a, b) => (virginBank[b.id] || 0) - (virginBank[a.id] || 0)).map(s => {
           const count = virginBank[s.id] || 0;
           return (
             <div key={s.id} className="card p-4">

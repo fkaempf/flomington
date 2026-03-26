@@ -136,6 +136,10 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps,
             const pA = stocks.find(s => s.id === c.parentA);
             const pB = stocks.find(s => s.id === c.parentB);
             return [pA?.name, pB?.name, c.notes || ''].some(x => (x || '').toLowerCase().includes(q));
+          }).sort((a, b) => {
+            const ta = (expBank[a.id]?.m || 0) + (expBank[a.id]?.f || 0);
+            const tb = (expBank[b.id]?.m || 0) + (expBank[b.id]?.f || 0);
+            return tb - ta;
           }).map(c => {
             const pA = stocks.find(s => s.id === c.parentA);
             const pB = stocks.find(s => s.id === c.parentB);
@@ -173,7 +177,11 @@ function ExpScreen({ stocks, crosses, expBank, setExpBank, toast, printListExps,
             );
           })
         ) : (
-          stocks.filter(s => !search || [s.name, s.genotype || ''].some(x => x.toLowerCase().includes(search.toLowerCase()))).map(s => {
+          stocks.filter(s => !search || [s.name, s.genotype || ''].some(x => x.toLowerCase().includes(search.toLowerCase()))).sort((a, b) => {
+            const ta = (expBank[a.id]?.m || 0) + (expBank[a.id]?.f || 0);
+            const tb = (expBank[b.id]?.m || 0) + (expBank[b.id]?.f || 0);
+            return tb - ta;
+          }).map(s => {
             const entry = expBank[s.id] || { m: 0, f: 0 };
             return (
               <div key={s.id} className="card p-4">

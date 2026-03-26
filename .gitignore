@@ -1,3 +1,8 @@
 node_modules/
 dist/
 .worktrees/
+*.DS_Store
+.DS_Store
+.env.test
+.env*.local
+tests/output/

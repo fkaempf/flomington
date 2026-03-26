@@ -77,6 +77,15 @@ CREATE TABLE IF NOT EXISTS collections (
   created_at timestamptz DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS exp_banks (
+  user_name text NOT NULL,
+  source_id text NOT NULL,
+  source text NOT NULL DEFAULT 'cross',
+  male_count integer NOT NULL DEFAULT 0,
+  female_count integer NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_name, source_id)
+);
+
 -- Auto-update updated_at
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
@@ -96,6 +105,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE pins;
 ALTER PUBLICATION supabase_realtime ADD TABLE virgin_banks;
 ALTER PUBLICATION supabase_realtime ADD TABLE transfers;
 ALTER PUBLICATION supabase_realtime ADD TABLE collections;
+ALTER PUBLICATION supabase_realtime ADD TABLE exp_banks;
 
 -- Allow anonymous access (app uses shared password via StatiCrypt, not Supabase auth)
 ALTER TABLE stocks ENABLE ROW LEVEL SECURITY;
@@ -104,6 +114,7 @@ ALTER TABLE pins ENABLE ROW LEVEL SECURITY;
 ALTER TABLE virgin_banks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transfers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE collections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE exp_banks ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow all" ON stocks FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all" ON crosses FOR ALL USING (true) WITH CHECK (true);
@@ -111,3 +122,4 @@ CREATE POLICY "Allow all" ON pins FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all" ON virgin_banks FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all" ON transfers FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all" ON collections FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all" ON exp_banks FOR ALL USING (true) WITH CHECK (true);

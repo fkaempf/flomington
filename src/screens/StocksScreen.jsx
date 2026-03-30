@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import ReactDOM from 'react-dom';
 import { Modal, Btn, Inp, Txt, Field, Confirm, TagBadges } from '../components/ui';
 import { TEMPS, USERS } from '../utils/constants.js';
 import { today, fmt, dFromNow } from '../utils/dates.js';
@@ -553,12 +554,12 @@ function StocksScreen({ stocks, setStocks, crosses, toast, currentUser, onTransf
         </div>
       </Modal>
 
-      {/* Bulk action toolbar - replaces bottom nav */}
+      {/* Bulk action toolbar - replaces bottom nav (portal to escape main's translateZ) */}
       {selectMode && (() => {
         const dis = selected.size === 0;
         const btnCls = "flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg transition-all active:scale-95 cursor-pointer";
         const disStyle = { opacity: 0.3, pointerEvents: 'none' };
-        return (
+        return ReactDOM.createPortal(
           <nav className="bottom-nav" style={{ gap: '2px', padding: '4px 6px' }}>
             <span className="text-[10px] font-semibold px-2 whitespace-nowrap" style={{ color: 'var(--text-2)' }}>{selected.size || 'None'}</span>
             <div title="Select all / deselect all" onClick={selectAll} className={btnCls} style={{ color: 'var(--accent-2)' }}>
@@ -597,7 +598,8 @@ function StocksScreen({ stocks, setStocks, crosses, toast, currentUser, onTransf
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               <span className="text-[9px]">Delete</span>
             </div>
-          </nav>
+          </nav>,
+          document.body
         );
       })()}
 
